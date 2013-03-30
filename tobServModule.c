@@ -36,62 +36,39 @@ int IsPostVariableSet(header *headerstruct, char *name)
 
 int InitializeTemplate(tobServ_template *templatehandle)
 {
-    templatehandle->num = 0;
+    templatehandle->numvariables = 0;
+    templatehandle->variables = NULL;
     templatehandle->numsections = 0;
     templatehandle->sections = NULL;
-    templatehandle->items = NULL;
+    templatehandle->numswitches = 0;
+    templatehandle->switches = NULL;
 
     return 0;
 }
 
 int FreeTemplate(tobServ_template *templatehandle)
 {
-    int i,a,b;
-
-    for(i=0;i<templatehandle->num;i++)
+    for(i=0;i<numvariables;i++)
     {
-        free(templatehandle->items[i].name);
-        free(templatehandle->items[i].replace);
+	tobString_Free(&templatehandle->variables[i].name);
+	tobString_Free(&templatehandle->variables[i].replace);
     }
+    free(templatehandle->variables);
 
-    if(templatehandle->items)
-        free(templatehandle->items);
+    
+	
 
-    templatehandle->items = NULL;
-    templatehandle->num = 0;
-
-    for(i=0;i<templatehandle->numsections;i++)
-    {
-        for(a=0;a<templatehandle->sections[i].num;a++)
-        {
-            for(b=0;b<templatehandle->sections[i].rows[a].num;b++)
-            {
-                free(templatehandle->sections[i].rows[a].items[b].name);
-                free(templatehandle->sections[i].rows[a].items[b].replace);
-            }
-            if(templatehandle->sections[i].rows[a].items)
-                free(templatehandle->sections[i].rows[a].items);
-        }
-        if(templatehandle->sections[i].name)
-            free(templatehandle->sections[i].name);
-        if(templatehandle->sections[i].rows)
-            free(templatehandle->sections[i].rows);
-    }
-    if(templatehandle->sections)
-        free(templatehandle->sections);
-
-    templatehandle->sections = NULL;
-    templatehandle->numsections = 0;
+    
 
     return 0;
 }
 
-int AddTemplateItem(tobServ_template *templatehandle, char *name, char *replace)
+int AddTemplateVariable(tobServ_template *templatehandle, char *name, char *replace)
 {
     int newnum;
 
     newnum = templatehandle->num+1;
-    templatehandle->items = realloc(templatehandle->items, sizeof(tobServ_TemplateItem)*newnum);
+    templatehandle->items = realloc(templatehandle->items, sizeof(tobServ_TemplateVariable)*newnum);
 
     templatehandle->items[templatehandle->num].name = malloc(strlen(name)+1);
     strcpy(templatehandle->items[templatehandle->num].name, name);
@@ -114,7 +91,7 @@ int AddTemplateSection(tobServ_template *templatehandle, char *name)
     templatehandle->sections[templatehandle->numsections].name = malloc(strlen(name)+1);
     strcpy(templatehandle->sections[templatehandle->numsections].name, name);
 
-    templatehandle->sections[templatehandle->numsections].num = 0;
+    templatehandle->sections[templatehandle->numsections].numrows = 0;
     templatehandle->sections[templatehandle->numsections].rows = NULL;
 
     templatehandle->numsections = newnum;
@@ -122,116 +99,393 @@ int AddTemplateSection(tobServ_template *templatehandle, char *name)
     return (newnum-1);
 }
 
-int AddTemplateSectionRow(tobServ_template *templatehandle, int sectionID)
+tobServ_template AddTemplateSectionRow(tobServ_template *templatehandle, int sectionID)
 {
     int newnum;
 
-    newnum = templatehandle->sections[sectionID].num+1;
-    templatehandle->sections[sectionID].rows = realloc(templatehandle->sections[sectionID].rows, sizeof(tobServ_TemplateRow)*newnum);
+    newnum = templatehandle->sections[sectionID].numrows+1;
+    templatehandle->sections[sectionID].rows = realloc(templatehandle->sections[sectionID].rows, sizeof(tobServ_template*) * newnum);
 
-    templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].num].num = 0;
-    templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].num].items = NULL;
+    //get space for the new row template and initialize it
+    templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].numrows] = malloc(sizeof(tobServ_template));
+    InitializeTemplate(templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].numrows]);
 
-    templatehandle->sections[sectionID].num = newnum;
+    templatehandle->sections[sectionID].numrows = newnum;
 
-    return (templatehandle->sections[sectionID].num-1);
+    return templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].numrows-1];
 }
 
-int AddTemplateRowItem(tobServ_template *templatehandle, int sectionID, int rowID, char *name, char *replace)
+tobServ_parsedFile ParseFile(tobServ_file *file)
 {
-    int newnum;
+    tobServ_parsedFile result;
 
-    newnum = templatehandle->sections[sectionID].rows[rowID].num+1;
-    templatehandle->sections[sectionID].rows[rowID].items = realloc(templatehandle->sections[sectionID].rows[rowID].items, sizeof(tobServ_TemplateItem)*newnum);
+    result = ParseFileSubString(file.content, file.size);
+    result.type = 0;
 
-    templatehandle->sections[sectionID].rows[rowID].items[templatehandle->sections[sectionID].rows[rowID].num].name = malloc(strlen(name)+1);
-    strcpy(templatehandle->sections[sectionID].rows[rowID].items[templatehandle->sections[sectionID].rows[rowID].num].name, name);
-
-    templatehandle->sections[sectionID].rows[rowID].items[templatehandle->sections[sectionID].rows[rowID].num].replace = malloc(strlen(replace)+1);
-    strcpy(templatehandle->sections[sectionID].rows[rowID].items[templatehandle->sections[sectionID].rows[rowID].num].replace, replace);
-
-    templatehandle->sections[sectionID].rows[rowID].num = newnum;
-
-    return 0;
+    return result;
 }
 
-tobServ_file *TemplateReplace(tobServ_template *templatehandle, tobServ_file *original)
+tobServ_parsedFile ParseFileSubString(char *string, int size)
 {
-    int i, a, b;
-    char *sectionbeginning, *sectionending, *currentposition;
-    char *sectioncontent;
-    int endingindicatorlength;
-    int sectioncontentsize;
-    char *temp;
-    char buffer[512];
-    tobString result;
+    int i, a;
+    tobServ_parsedFile result;
+    char name[MAX_VARIABLE_LENGTH];
+    tobString text;
+    tobString switchSET;
+    tobString switchUNSET;
 
-    //add null termination but don't increase the size. The null character isn't supposed to be sent to the client
-    original->content = realloc(original->content, original->size+1);
-    original->content[original->size] = '\0';
+    result.numparts = 0;
+    result.parts = NULL;
 
-    //parse sections
-    for(i=0;i<templatehandle->numsections;i++)
+    tobString_Init(&text, 512);
+    
+    for(i=0;i<size;i++)
     {
-        snprintf(buffer, 512, "[%s]", templatehandle->sections[i].name);
-        while( (sectionbeginning = strstr(original->content, buffer)) )
-        {
-            tobString_Init(&result);
+	if(string[i] == '%') //VARIABLE POSSIBLY FOUND
+	{
+	    i++; //go to the next char
+	    a=0; //initialize variablename character counter
+	    
+	    for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	    {
+		if(string[i] == '%') //end found
+		{		    
+		    name[a] = '\0';
+		    
+		    if(a>0)//it's only a variable if the variablename length is greater than zero
+		    {
+			//check if text must be added
+			if(text.len>0)
+			{
+			    result.numparts++;
+			    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
 
-            //Add everything to the result until the section begins
-            tobString_Add(&result, original->content, (int)(sectionbeginning-original->content));
+			    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+			    result.parts[result.numparts-1].numparts = 0;
+			    result.parts[result.numparts-1].parts = NULL;
 
-            //current position is right after the [sectionname]
-            currentposition = sectionbeginning+strlen(buffer);
+			    result.parts[result.numparts-1].name = text;
 
-            //get the ending
-            snprintf(buffer, 512, "[/%s]", templatehandle->sections[i].name);
-            sectionending = strstr(original->content, buffer);
-            if(!sectionending || sectionending<currentposition) //if the sectionending wasn't found or is before the start then quit
-            {
-                tobString_Free(&result);
-                continue;
-            }
-            endingindicatorlength = strlen(buffer);
+			    tobString_Init(&text, 512);
+			}
+			
+			result.numparts++;
+			result.parts = realloc(result.parts, result.numparts*sizeof(tobServ_parsedFile));
 
-            //get the content of the section
-            sectioncontentsize = (int)(sectionending-currentposition)+1;
-            sectioncontent = malloc(sectioncontentsize);
-            stringcpy(sectioncontent, currentposition, sectioncontentsize);
+			result.parts[result.numparts-1].type = PARSEDFILE_VARIABLE;
+			result.parts[result.numparts-1].numparts = 0;
+			result.parts[result.numparts-1].parts = NULL;
+			
+			tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
+			tobString_Copy(&result.parts[result.numparts-1].name, name);
+		    }
+		    else
+			tobString_AddChar(&text, "%", strlen("%")); //%% means escaped %
 
-            //add the rows to the tobString object
-            for(a=0;a<templatehandle->sections[i].num;a++)
-            {
-                temp = malloc(sectioncontentsize);
-                strcpy(temp, sectioncontent);
+		    break; //we are done
+		}
+		else
+		{
+		    //save char and go to the next one
+		    name[a] = string[i];
+		    a++;
+		}
+	    }
 
-                for(b=0;b<templatehandle->sections[i].rows[a].num;b++)
-                    temp = stringreplace(temp, templatehandle->sections[i].rows[a].items[b].name, templatehandle->sections[i].rows[a].items[b].replace);
+	    if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding the second %
+	    {
+		//add everything but don't replace anything
+		tobString_AddChar(&text, '%');
+		tobString_Add(&text, name, a);
+	    }
+	}
+	else if(string[i] == '[' && string[i+1] != '/') //SECTION POSSIBLY FOUND [/ is reserved for section endings
+	{
+	    i++; //go to the next char
+	    a=0; //reset name index
+	    
+	    for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	    {
+		if(string[i] == ']') //end found
+		{
+		    name[a] = '\0';
+		    
+		    if(a>0) //it's only a section if the sectionname length is greater than zero
+		    {
+			tobString_Init(&sectioncontent, 512); //ALLOC SIZE OF 512
+				
+			//search for the ending
+			for(;i< ( size - a - 3) ;i++) // there still has to be enough space for the test
+			{
+			    snprintf(buffer, sizeof(buffer), "[/%s]", name);
+				    
+			    if(!strcmp(string+i, name))
+			    {
+				//check if text must be added
+				if(text.len>0)
+				{
+				    result.numparts++;
+				    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
 
-                tobString_Add(&result, temp, strlen(temp));
-                free(temp);
-            }
+				    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+				    result.parts[result.numparts-1].numparts = 0;
+				    result.parts[result.numparts-1].parts = NULL;
 
-            //add the ending (part after the parsed section)
-            sectionending += endingindicatorlength;
-            tobString_Add(&result, sectionending, strlen(sectionending));
+				    result.parts[result.numparts-1].name = text;
 
-            //copy it over from the tobString container to the content
-            free(original->content);
-            original->content = malloc(result.len + 1);
-            strcpy(original->content, result.str);
+				    tobString_Init(&text, 512);
+				}
+				
+				result.numparts++;
+				result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
 
-            //free the tobString object
-            tobString_Free(&result);
-        }
+				result.parts[result.numparts-1] = ParseFileSubString(sectioncontent.str, sectioncontent.len);
+
+				result.parts[result.numparts-1].type = PARSEDFILE_SECTION;
+			
+				tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
+				tobString_Copy(&result.parts[result.numparts-1].name, name);				
+
+				i += a + 3; //put the index behind the section
+				break;
+			    }
+			    else
+				tobString_AddChar(&sectioncontent, string[i]);
+			}
+
+			if(i == size - a - 3) //ending wasn't found till the very end
+			{
+			    tobString_AddChar(&text, '['); //add the leading char
+			    tobString_Add(&text, name, a); //add the name
+			    tobString_AddChar(&text, ']'); //add the closing char
+			    tobString_Add(&text, sectioncontent.str, sectioncontent.len);
+			}
+
+			tobString_Free(&sectioncontent);
+		    }
+		    else
+			tobString_Add(&text, "[]", strlen("[]")); //no replacement needed because it isn't a valid sectionname
+
+		    break;//we are done
+		}
+
+		name[a] = string[i];
+		a++;
+	    }
+	}
+	else if(string[i] == '{') //SWITCH possibly found
+	{
+	    i++; //go to the next char
+	    a=0; //reset name index
+	    
+	    for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	    {
+		if(string[i] == '}') //end found
+		{
+		    i++;
+		    if(original->content[i] != '{') // { must follow right after
+		    {
+			//no switch found add everything
+			tobString_AddChar(&text, '{');
+			tobString_Add(&text, name, a);
+			tobString_AddChar(&text, '}');
+		    }
+		    else
+		    {
+			i++; //next char
+			tobString_Init(&switchSET, 512); //512 ALLOC size
+			tobString_Init(&switchUNSET, 512); //512 ALLOC size
+
+			//get the onset part of the switch
+			for(;i<size;i++)
+			{
+			    if(string[i] == '}')
+				break;
+
+			    tobString_AddChar(&switchSET, string[i]);
+			}
+			if(i==size) //couldn't find '}'
+			{
+			    tobString_AddChar(&text, '{');
+			    tobString_Add(&text, name, a);
+			    tobString_Add(&text, "}{", strlen("}{"));
+			    tobString_Add(&text, switchSET.str, switchSET.len);
+			}
+			else
+			{
+			    //it was found now search for the unset part of the switch
+			    i++; //advance
+			    if(string[i] != '{') //opening { must follow right after
+			    {
+				tobString_AddChar(&text, '{');
+				tobString_Add(&text, name, a);
+				tobString_Add(&text, "}{", strlen("}{"));
+				tobString_Add(&text, switchSET.str, switchSET.len);
+				tobString_AddChar(&text, '}');
+			    }
+			    else
+			    {
+				i++; //next char
+				for(;i<size;i++)
+				{
+				    if(string[i] == '}')
+					break;
+
+				    tobString_AddChar(&switchUNSET, string[i]);
+				}
+				
+				if(i==size) //couldn't find '}'
+				{
+				    tobString_AddChar(&text, '{');
+				    tobString_Add(&text, name, a);
+				    tobString_Add(&text, "}{", strlen("}{"));
+				    tobString_Add(&text, switchSET.str, switchSET.len);
+				    tobString_Add(&text, "}{", strlen("}{"));
+				    tobString_Add(&text, switchUNSET.str, switchUNSET.len);
+				}
+				else
+				{
+				    //everything was found seems all valid
+
+				    //check if text must be added
+				    if(text.len>0)
+				    {
+					result.numparts++;
+					result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+
+					result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+					result.parts[result.numparts-1].numparts = 0;
+					result.parts[result.numparts-1].parts = NULL;
+
+					result.parts[result.numparts-1].name = text;
+
+					tobString_Init(&text, 512);
+				    }
+
+				    result.numparts++;
+				    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+
+				    //add switchSET and switchUNSET parsed
+				    result.parts[result.numparts-1].type = PARSEDFILE_SWITCH;
+				    result.parts[result.numparts-1].numparts = 2;
+				    result.parts[result.numparts-1].parts = malloc(sizeof(tobServ_parsedFile)*2);
+
+				    result.parts[result.numparts-1].parts[0] = ParseFileSubString(switchSET.str, switchSET.len);
+				    result.parts[result.numparts-1].parts[1] = ParseFileSubString(switchUNSET.str, switchUNSET.len);			    
+				}
+			    }
+			}			
+
+		        tobString_Free(&switchSET);
+			tobString_Free(&switchUNSET);
+		    }
+		    
+		    break;//done searching for the var name
+		}
+
+		//part of the name
+		name[a] = string[i];
+		a++;
+	    }
+
+	    if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding the closing bracket
+	    {
+		//add everything but don't replace anything
+		tobString_AddChar(&text, '{');
+		tobString_Add(&text, name, a);
+	    }
+	}
+	else
+	    tobString_AddChar(&text, string[i]);
+    }
+}
+
+tobString TemplateReplace(tobServ_template *templatehandle, tobServ_parsedFile *parsed)
+{
+    int i, a;
+    tobString result;
+    tobString subresult;
+
+    tobString_Init(&result);
+    
+    for(int i=0;i<parsed->numparts;i++)
+    {
+	switch(parsed->parts[i].type)
+	{
+	case PARSEDFILE_TEXT:
+	    tobString_Add(&result, parsed->parts[i].name.str, parsed->parts[i].name.len);
+	    break;
+	    
+	case PARSEDFILE_VARIABLE:
+	    for(a=0;a<templatehandle->numvariables;a++)
+	    {
+		if(!strcmp(templatehandle->variables[a].name.str, parsed->parts[i].name.str))
+		{
+		    tobString_Add(&result, templatehandle->variables[a].replace.str, templatehandle->variables[a].replace.len);
+		    break;
+		}
+	    }
+	    if(a==templatehandle->numvariables) //variable not found
+	    {
+		//add the var unreplaced
+		tobString_AddChar(&result, '%');
+		tobString_Add(&result, templatehandle->variables[a].name.str, templatehandle->variables[a].name.len);
+		tobString_AddChar(&result, '%');
+	    }
+	    break;
+	    
+	case PARSEDFILE_SECTION:
+	    for(a=0;a<templatehandle->numsections;a++)
+	    {
+		if(!strcmp(templatehandle->sections[a].name.str, parsed->parts[i].name.str))
+		{
+		    for(b=0;b<templatehandle->sections[a].numrows;b++)
+		    {
+			subresult = TemplateReplace(templatehandle->sections[a].rows[b], &parsed->parts[i]); //recursively fill the sectioncontent
+			tobString_Add(&result, subresult.str, subresult.len);
+			tobString_Free(subresult);
+		    }
+		    break;
+		}
+	    }
+	    if(a==templatehandle->numsections)//section not found
+	    {
+		//add some error
+		tobString_AddChar(&result, '[');
+		tobString_Add(&result, parsed->parts[i].name.str, parsed->parts[i].name.len);
+		tobString_AddChar(&result, ']');
+
+		tobString_Add(&result, "ERROR: Section was not found in the template", strlen("ERROR: Section was not found in the template"));
+
+		tobString_Add(&result, "[/", strlen("[/"));
+		tobString_Add(&result, parsed->parts[i].name.str, parsed->parts[i].name.len);
+		tobString_Add(&result, ']');
+	    }
+	    break;
+	    
+	case PARSEDFILE_SWITCH:
+	    for(a=0;a<templatehandle->numswitches;a++)
+	    {
+		if(!strcmp(templatehandle->switches[a].name.str, parsed->parts[i].name.str))
+		{
+		    subresult = TemplateReplace(templatehandle, &parsed->parts[i].parts[0]); //recursively fill the switchSET
+		    tobString_Add(&result, subresult.str, subresult.len);
+		    tobString_Free(subresult);
+		    break;
+		}
+	    }
+	    if(a==templatehandle->numswitches)
+	    {
+		subresult = TemplateReplace(templatehandle, &parsed->parts[i].parts[1]); //recursively fill the switchUNSET
+		tobString_Add(&result, subresult.str, subresult.len);
+		tobString_Free(subresult);
+	    }
+
+	    break;
+	}
     }
 
-    for(i=0;i<templatehandle->num;i++)
-        original->content = stringreplace(original->content, templatehandle->items[i].name, templatehandle->items[i].replace);
-
-    original->size = strlen(original->content); //size is without the null terminator
-
-    return original;
+    return result;
 }
 
 int SetSessionVariable(tobServ_Querry *querry, char *name, char *value)
@@ -338,10 +592,9 @@ tobServ_file get_file(char *path)
     size = ftell(handle);
     rewind (handle);
 
-
     buffer = malloc(size);
 
-    result = fread(buffer,1,size,handle);
+    result = fread(buffer, 1, size, handle);
     if(result != size)
     {
         file.content = NULL;
@@ -420,4 +673,28 @@ int GetPostVariableInt(header *requestheader, char *variable)
     free(temp);
 
     return result;
+}
+
+int SetTemplateSwitch(tobServ_template *template, char *name)
+{
+    templatehandle->numswitches++;
+
+    templatehandle->switches = realloc(templatehandle->switches, sizeof(tobServ_TemplateSwitch)*templatehandle->numswitches);
+
+    templatehandle->switches[templatehandle->numswitches-1].name = malloc(strlen(name)+1);
+    strcpy(templatehandle->switches[templatehandle->numswitches-1].name, name);
+
+    return 0;
+}
+
+int SetTemplateSectionSwitch(tobServ_template *templatehandle, int sectionID, int rowID, char *name)
+{
+    templatehandle->sections[sectionID].rows[rowID].numswitches++;
+
+    templatehandle->sections[sectionID].rows[rowID].switches = realloc(templatehandle->sections[sectionID].rows[rowID].switches, sizeof(tobServ_TemplateSwitch)*templatehandle->sections[sectionID].rows[rowID].numswitches);
+
+    templatehandle->sections[sectionID].rows[rowID].switches[templatehandle->sections[sectionID].rows[rowID].numswitches-1].name = malloc(strlen(name)+1);
+    strcpy(templatehandle->sections[sectionID].rows[rowID].switches[templatehandle->sections[sectionID].rows[rowID].numswitches-1].name, name);
+
+    return 0;
 }

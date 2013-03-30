@@ -15,11 +15,11 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#include "functions.h"
+#include "tobFUNC.h"
 
 #include "tobServModule.h"
 
-#define VERSION "0.0"
+#define VERSION "0.1"
 
 typedef struct _tobServ_commandline
 {
@@ -72,7 +72,8 @@ void error(char *msg)
 
 void write_log(char *file, char *string)
 {
-    // place some awesome log function here
+    //awesome log function needed
+    printf("%s: %s", file, string);
     return;
 }
 
@@ -101,7 +102,6 @@ int main(int argc, char *argv[])
     tobServ_thread *threads;
     tobServ_modulelist modulelist;
     int thread_num;
-    int timeout;
     int done;
 
     struct sockaddr_in serv_addr, cli_addr;
@@ -134,13 +134,12 @@ int main(int argc, char *argv[])
     pthread_cond_init(&thread_finished, NULL);
     pthread_mutex_init(&mutex_finished, NULL);
 
-    if (argc < 4)
+    if (argc < 3)
     {
-        fprintf(stderr, "ERROR, missing arguments 1: port 2: max threads 3: timeout in s\n");
+        fprintf(stderr, "ERROR, missing arguments 1: port 2: max threads\n");
         exit(1);
     }
 
-    timeout = atoi(argv[3]);
     thread_num = atoi(argv[2]);
     portno = atoi(argv[1]);
 
@@ -283,8 +282,6 @@ void *handle_request(void *arg)
 
     pthread_mutex_unlock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
 
-
-
     connection = ((tobServ_thread*)arg)->connection;
 
     request = get_header(connection, arg);
@@ -419,7 +416,6 @@ header get_header(int connection, tobServ_thread *arg)
     unsigned int size;
     unsigned int contentlength;
     unsigned int contentwritten;
-    char *temp = NULL;
     char *content = NULL;
     char *found;
     char **lines;
@@ -432,7 +428,6 @@ header get_header(int connection, tobServ_thread *arg)
     unsigned int numlines;
     unsigned int numwords;
 
-    temp = NULL;
     size=512;
     length=0;
     headerstring = malloc(size);

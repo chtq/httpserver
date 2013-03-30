@@ -1,18 +1,24 @@
 #ifndef TOBSERVMODULE_H
 #define TOBSERVMODULE_H
 
+//max number of chars a section name, switch name or replace name can have
+#define MAX_VARIABLE_LENGTH 100
+#define SESSION_NAME_SIZE 128
+#define SESSION_VALUE_SIZE 1024
+#define MODULE_NAME_SIZE 128
+
 #include <stdio.h>
 #include <malloc.h>
 #include <pthread.h>
 #include <string.h>
-#include "functions.h"
+#include "tobFUNC.h"
 
 
 typedef struct _tobServ_SessionVariable
 {
-    char name[128];
-    char value[1024];
-    char module[128];
+    char name[SESSION_NAME_SIZE];
+    char value[SESSION_VALUE_SIZE];
+    char module[MODULE_NAME_SIZE];
 } tobServ_SessionVariable;
 
 typedef struct _tobServ_Session
@@ -78,33 +84,48 @@ typedef struct _tobServ_file
     char *content;
     char *type;
     int size;
+    tobServ_parsedFile *parsedFile;
 } tobServ_file;
 
-typedef struct _tobServ_TemplateItem
+#define PARSEDFILE_ROOT 0
+#define PARSEDFILE_TEXT 1
+#define PARSEDFILE_SWITCH 2
+#define PARSEDFILE_SECTION 3
+#define PARSEDFILE_VARIABLE 4
+typedef struct _tobServ_parsedFile
 {
-    char *name;
-    char *replace;
-} tobServ_TemplateItem;
+    int type;
+    int numparts;
+    struct _tobServ_parsedFile *parts;
+    tobString name;
+} tobServ_parsedFile;
 
-typedef struct _tobServ_TemplateRow
+typedef struct _tobServ_TemplateVariable
 {
-    int num;
-    tobServ_TemplateItem *items;
-} tobServ_TemplateRow;
+    tobString name;
+    tobString replace;
+} tobServ_TemplateVariable;
+
+typedef struct _tobServ_TemplateSwitch
+{
+    tobString name;
+}
 
 typedef struct _tobServ_TemplateSection
 {
-    char *name;
-    int num;
-    tobServ_TemplateRow *rows;
+    tobString name;
+    int numrows;
+    tobServ_Template **rows;
 } tobServ_TemplateSection;
 
 typedef struct _tobServ_Template
 {
-    int num;
-    tobServ_TemplateItem *items;
+    int numvariables;
+    tobServ_TemplateVariable *variables;
     int numsections;
     tobServ_TemplateSection *sections;
+    int numswitches;
+    tobServ_TemplateSwitch *switches;
 } tobServ_template;
 
 typedef tobServ_response (*module_QUERRY_function)(header, tobServ_Querry, char*);
@@ -114,15 +135,21 @@ int get_file_type(char *type, int size, char *path);
 int SetSessionVariable(tobServ_Querry *querry, char *name, char *value);
 char *GetSessionVariable(tobServ_Querry *querry, char *name);
 
-int InitializeTemplate(tobServ_template*);
-int FreeTemplate(tobServ_template*);
-int AddTemplateItem(tobServ_template*, char *, char *);
-int AddTemplateSection(tobServ_template*, char *name); //returns SectionID
-int AddTemplateSectionRow(tobServ_template*, int); //returns RowID
-int AddTemplateRowItem(tobServ_template*, int sectionID, int rowID, char *name, char *replace);
+tobServ_parsedFile ParseFile(tobServ_file *file);
+tobServ_parsedFile ParseFileSubString(char *string);
 
-tobServ_file *TemplateReplace(tobServ_template*, tobServ_file*);
-char *GetPostVariable(header*, char*);
+int InitializeTemplate(tobServ_template *template);
+int FreeTemplate(tobServ_template *template);
+int AddTemplateVariable(tobServ_template *template, char *name, char *replace);
+int SetTemplateSwitch(tobServ_template *template, char *name);
+int AddTemplateSection(tobServ_template*, char *name); //returns SectionID
+int AddTemplateSectionRow(tobServ_template *template, tobServ_template *rowtemplate);
+
+//adds the rows to result
+int TemplateReplaceSectionRows(tobServ_template templatehandle, int sectionID, tobString *result, tobString sectioncontent);
+
+tobString TemplateReplace(tobServ_template *templatehandle, tobServ_parsedFile *parsed);
+char *GetPostVariable(header *, char *);
 int GetPostVariableInt(header*, char*);
 int IsPostVariableSet(header*, char*);
 
