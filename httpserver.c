@@ -15,9 +15,12 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#include "tobFUNC.h"
+#include <tobCONF.h>
+#include <tobFUNC.h>
 
 #include "tobServModule.h"
+#include "FileCache.h"
+#include "Sessions.h"
 
 #define VERSION "0.1"
 
@@ -27,6 +30,8 @@ typedef struct _tobServ_commandline
     pthread_t commandthreadID;
     int doshutdown;
     int domodulereload;
+
+    tobServ_FileCache *filecache;
 
     int numthreads;
     int maxthreads;
@@ -118,8 +123,72 @@ int main(int argc, char *argv[])
 
     struct sigaction new_term_action;
 
+    tobServ_FileCache filecache;
+    int maxfiles;
+    int maxfilesize;
+
+    tobCONF_File configfile;
+    tobCONF_Section *configsection;
+
     //code
     srand(time(NULL));
+
+    if(tobCONF_ReadFile(&configfile, "server.cfg")<0)
+    {
+	printf("ERROR on reading ConfigFile: %s", tobCONF_GetLastError(&configfile));
+        return 0;
+    }
+
+    configsection = tobCONF_GetSection(&configfile, "server");
+    if(!configsection)
+    {
+	printf("ERROR config section \"server\" doesn't exist");
+	tobCONF_Free(&configfile);
+	return 0;
+    }
+
+    thread_num = atoi(tobCONF_GetElement(&configfile, configsection, "maxthreads"));
+    if(thread_num<1)
+    {
+	printf("ERROR invalid value for maxthreads");
+	tobCONF_Free(&configfile);
+	return 0;	
+    }
+
+    portno = atoi(tobCONF_GetElement(&configfile, configsection, "port"));
+    if(portno<1 || portno>65536)
+    {
+	printf("ERROR invalid value for port");
+	tobCONF_Free(&configfile);
+	return 0;	
+    }
+
+    configsection = tobCONF_GetSection(&configfile, "Cache");
+    if(!configsection)
+    {
+	printf("ERROR config section \"Cache\" doesn't exist");
+	tobCONF_Free(&configfile);
+	return 0;
+    }
+
+    maxfiles = atoi(tobCONF_GetElement(&configfile, configsection, "maxfiles"));
+    if(maxfiles<1)
+    {
+	printf("ERROR invalid value for maxfiles");
+	tobCONF_Free(&configfile);
+	return 0;	
+    }
+
+    maxfilesize = atoi(tobCONF_GetElement(&configfile, configsection, "maxfilesize"));
+    if(maxfilesize<1)
+    {
+	printf("ERROR invalid value for maxfilesize");
+	tobCONF_Free(&configfile);
+	return 0;	
+    }
+
+    tobCONF_Free(&configfile);
+    //done parsing the config
 
     new_term_action.sa_handler = main_shutdown_handler;
     sigemptyset (&new_term_action.sa_mask);
@@ -133,15 +202,6 @@ int main(int argc, char *argv[])
 
     pthread_cond_init(&thread_finished, NULL);
     pthread_mutex_init(&mutex_finished, NULL);
-
-    if (argc < 3)
-    {
-        fprintf(stderr, "ERROR, missing arguments 1: port 2: max threads\n");
-        exit(1);
-    }
-
-    thread_num = atoi(argv[2]);
-    portno = atoi(argv[1]);
 
     threads = malloc(sizeof(tobServ_thread)*thread_num);
     bzero((char *)threads, sizeof(tobServ_thread)*thread_num);
@@ -178,6 +238,10 @@ int main(int argc, char *argv[])
 
     pthread_mutex_init(&commandline.commandline_mutex, NULL);
 
+    //FileCache
+    InitializeFileCache(&filecache, maxfiles, maxfilesize);
+    commandline.filecache = &filecache;
+
     //create command handler
     pthread_create(&commandline.commandthreadID, &attr, handle_commandline, (void*)&commandline);
 
@@ -213,6 +277,7 @@ int main(int argc, char *argv[])
                     threads[i].querry.time = time(NULL);
                     threads[i].commandline = &commandline;
                     threads[i].querry.sessionlist = &sessionlist;
+		    threads[i].querry.filecache = &filecache;
 
                     pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i]);
 
@@ -244,6 +309,7 @@ int main(int argc, char *argv[])
     close(sockfd);
     FreeModules(modulelist);
     FreeSessions(&sessionlist);
+    FreeFileCache(&filecache);
 
     free(threads);
     threads = NULL;
@@ -303,6 +369,7 @@ void *handle_request(void *arg)
 
         return 0;
     }
+    ((tobServ_thread*)arg)->querry.requestheader = &request;  
 
     pathclone = malloc(strlen(request.path)+1);
 
@@ -358,7 +425,7 @@ void *handle_request(void *arg)
         {
             if(!strcmp(((tobServ_thread*)arg)->modulelist.modules[i].name, module))
             {
-                response = ((tobServ_thread*)arg)->modulelist.modules[i].querry_function(request, ((tobServ_thread*)arg)->querry, action);
+                response = ((tobServ_thread*)arg)->modulelist.modules[i].querry_function(((tobServ_thread*)arg)->querry, action);
 
                 if(!response.response || !response.type)
                 {
@@ -387,8 +454,6 @@ void *handle_request(void *arg)
 
     free(pathclone);
     pathclone = NULL;
-
-
 
     pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
 
