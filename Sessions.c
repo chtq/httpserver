@@ -33,7 +33,7 @@ int SetSessionVariable(tobServ_Querry *querry, char *name, char *value)
         querry->sessionlist->sessions[i].variables = realloc(querry->sessionlist->sessions[i].variables, sizeof(tobServ_SessionVariable)*querry->sessionlist->sessions[i].num);
     }
 
-    stringcpy(querry->sessionlist->sessions[i].variables[a].name, name, SESSSION_NAME_SIZE);
+    stringcpy(querry->sessionlist->sessions[i].variables[a].name, name, SESSION_NAME_SIZE);
     stringcpy(querry->sessionlist->sessions[i].variables[a].value, value, SESSION_VALUE_SIZE);
     stringcpy(querry->sessionlist->sessions[i].variables[a].module, querry->module, MODULE_NAME_SIZE);
 

@@ -389,6 +389,8 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
 	else
 	    tobString_AddChar(&text, string[i]);
     }
+
+    return result;
 }
 
 tobString TemplateReplace(tobServ_template *templatehandle, tobServ_parsedFile *parsed)
@@ -498,7 +500,7 @@ int FreeParsed(tobServ_parsedFile *parsed)
     case PARSEDFILE_SWITCH:
 	tobString_Free(&parsed->name);
 	FreeParsed(&parsed->parts[0]);
-	FreeParsed(&parsed->parts[i]);
+	FreeParsed(&parsed->parts[1]);
 	free(parsed->parts);
 	break;
 

@@ -61,7 +61,7 @@ int AlterAndEmptyFileCache(tobServ_FileCache* filecache, int maxfiles, int maxfi
 struct _tobServ_file get_file(tobServ_FileCache* filecache, char *filename, int parse, int cache);
 
 
-int free_file(struct _tobServ_file*);
+int free_file(tobServ_FileCache *cache, struct _tobServ_file*);
 int get_file_type(char *type, int size, char *path);
 
 #endif
