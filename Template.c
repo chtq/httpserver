@@ -157,7 +157,7 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
 
 			    result.parts[result.numparts-1].name = text;
 
-			    tobString_Init(&text, 512);
+			    tobString_Init(&text, 512);//create a new text buffer
 			}
 			
 			result.numparts++;
@@ -390,6 +390,22 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
 	    tobString_AddChar(&text, string[i]);
     }
 
+    //add last text part
+    if(text.len>0)
+    {
+	result.numparts++;
+	result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+
+	result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+	result.parts[result.numparts-1].numparts = 0;
+	result.parts[result.numparts-1].parts = NULL;
+
+	result.parts[result.numparts-1].name = text;
+    }
+    else
+	tobString_Free(&text);
+    
+
     return result;
 }
 
@@ -422,7 +438,7 @@ tobString TemplateReplace(tobServ_template *templatehandle, tobServ_parsedFile *
 	    {
 		//add the var unreplaced
 		tobString_AddChar(&result, '%');
-		tobString_Add(&result, templatehandle->variables[a].name.str, templatehandle->variables[a].name.len);
+		tobString_Add(&result, parsed->parts[i].name.str, parsed->parts[i].name.len);
 		tobString_AddChar(&result, '%');
 	    }
 	    break;

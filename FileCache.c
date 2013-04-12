@@ -39,8 +39,10 @@ int FreeFileCache(tobServ_FileCache *filecache)
 	pthread_mutex_destroy(&filecache->files[i].filelock);
 
 	free(filecache->files[i].file->content);
+	free(filecache->files[newID].file->type);
 	FreeParsed(&filecache->files[i].file->parsedFile);
-	
+
+	free(filecache->files[i].path);
 	free(filecache->files[i].file);
     }
 
@@ -142,6 +144,7 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	    newID = highestDeletePriority;
 	    
 	    free(filecache->files[newID].file->content);
+	    free(filecache->files[newID].file->type);
 	    FreeParsed(&filecache->files[newID].file->parsedFile);
 
 	    filecache->files[newID].file->content = file.content;
@@ -149,6 +152,9 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	    filecache->files[newID].file->type = file.type;
 	    filecache->files[newID].file->parsedFile = file.parsedFile;
 
+	    filecache->files[newID].path = realloc(filecache->files[newID].path, strlen(path)+1);
+	    strcpy(filecache->files[newID].path, path);
+	    
 	    filecache->files[newID].lastaccess = time(NULL);
 	    filecache->files[newID].usecount = 1; //adder is using it
 
@@ -170,8 +176,10 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	filecache->files[newID].file->type = file.type;
 	filecache->files[newID].file->parsedFile = file.parsedFile;
 
+	filecache->files[newID].path = malloc(strlen(path)+1);
+	strcpy(filecache->files[newID].path, path);
+
 	filecache->files[newID].lastaccess = time(NULL);
-	*filecache->files[newID].file = file;
 	filecache->files[newID].usecount = 1; //adder is using it
 	pthread_mutex_init(&filecache->files[newID].filelock, NULL); //new mutex lock
 

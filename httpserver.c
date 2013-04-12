@@ -538,7 +538,7 @@ header get_header(int connection, tobServ_thread *arg)
 
     numlines = explode(&lines, headerstring, "\r\n");
 
-    if(!numlines)
+    if(numlines<3)
     {
         result.numinfos = 0;
         stringcpy(result.method, "INVALID", sizeof(result.method));
