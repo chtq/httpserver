@@ -57,15 +57,6 @@ typedef struct _tobServ_response
 typedef tobServ_response (*module_QUERRY_function)(tobServ_Querry querry, char *action);
 
 //allocates space for the output, must be freed
-char *tobServ_FormRelativePath(tobServ_Querry *querry, char *path)
-{
-    char *output;
-
-    output = malloc(strlen(querry->modulepath)+strlen(path)+1+strlen("modules/")+1); // ex: modules/MODULE/INPUT\0
-
-    sprintf(output, "modules/%s/%s", querry->modulepath, path);
-
-    return output;
-}
+char *tobServ_FormRelativePath(tobServ_Querry *querry, char *path);
 
 #endif

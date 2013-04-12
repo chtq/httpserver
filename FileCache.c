@@ -37,7 +37,10 @@ int FreeFileCache(tobServ_FileCache *filecache)
     for(i=0;i<filecache->numfiles;i++)
     {
 	pthread_mutex_destroy(&filecache->files[i].filelock);
-	free_file(filecache->files[i].file);
+
+	free(filecache->files[i].file->content);
+	FreeParsed(&filecache->files[i].file->parsedFile);
+	
 	free(filecache->files[i].file);
     }
 
@@ -138,7 +141,9 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	{
 	    newID = highestDeletePriority;
 	    
-	    free_file(filecache->files[newID].file);
+	    free(filecache->files[newID].file->content);
+	    FreeParsed(&filecache->files[newID].file->parsedFile);
+
 	    filecache->files[newID].file->content = file.content;
 	    filecache->files[newID].file->size = file.size;
 	    filecache->files[newID].file->type = file.type;
@@ -236,16 +241,14 @@ tobServ_file LoadFileFromDisk(char *path)
 }
 
 int FreeFileFromFileCache(tobServ_FileCache* filecache, tobServ_file* file)
-{
-    unsigned int i;
-    
+{  
     if(file->cacheID>0) //it is cached
     {
 	pthread_rwlock_rdlock(&filecache->lock);
 
 	pthread_mutex_lock(&filecache->files[file->cacheID].filelock);
-	filecache->files[i].usecount--;
-	pthread_mutex_unlock(&filecache->files[i].filelock);				 
+	filecache->files[file->cacheID].usecount--;
+	pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);				 
 
 	pthread_rwlock_unlock(&filecache->lock);
 

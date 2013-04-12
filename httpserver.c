@@ -18,9 +18,9 @@
 #include <tobCONF.h>
 #include <tobFUNC.h>
 
-#include "tobServModule.h"
-#include "FileCache.h"
-#include "Sessions.h"
+#include <tobServModule.h>
+#include <FileCache.h>
+#include <Sessions.h>
 
 #define VERSION "0.1"
 
@@ -78,7 +78,7 @@ void error(char *msg)
 void write_log(char *file, char *string)
 {
     //awesome log function needed
-    printf("%s: %s", file, string);
+    printf("%s: %s\n", file, string);
     return;
 }
 
@@ -425,6 +425,9 @@ void *handle_request(void *arg)
         {
             if(!strcmp(((tobServ_thread*)arg)->modulelist.modules[i].name, module))
             {
+		//store module path		
+		strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist.modules[i].path);
+		    
                 response = ((tobServ_thread*)arg)->modulelist.modules[i].querry_function(((tobServ_thread*)arg)->querry, action);
 
                 if(!response.response || !response.type)
@@ -746,7 +749,7 @@ tobServ_modulelist LoadModules(char *path)
     int size;
     int i, a;
     char *line;
-    char *rest;
+    char *rest, *error;
     int result;
     char *buffer, *originalbuffer;
     char logger[1024];
@@ -826,7 +829,7 @@ tobServ_modulelist LoadModules(char *path)
 
                 if(isalnum(line[i]))
                 {
-                    for(a=0; isalnum(line[i]) || line[i]=='/' || line[i]=='.'; a++)
+                    for(a=0; line[i]!=' ' && line[i]!='\n'; a++)
                     {
                         if(a>254)
                         {
@@ -876,9 +879,9 @@ tobServ_modulelist LoadModules(char *path)
     {
         list.modules[i].handle = dlopen(list.modules[i].path, RTLD_LAZY);
 
-        if(dlerror()!=NULL)
+        if((error = dlerror()) != NULL)
         {
-            snprintf(logger, 1024, "failed on loading module: %s", list.modules[i].name);
+            snprintf(logger, 1024, "failed on loading module: %s, REASON: %s", list.modules[i].name, error);
             write_log("error.txt", logger);
 
             free(list.modules);
@@ -901,6 +904,18 @@ tobServ_modulelist LoadModules(char *path)
             list.count = -1;
             return list;
         }
+
+	//remove the filename from path ex modules/test/test.so to modules/test/ to have a useable relativ path	
+	for(a=strlen(list.modules[i].path) ; a>=0 ; a--)
+	{
+	    if(list.modules[i].path[a] == '/')
+	    {
+		list.modules[i].path[a+1] = '\0';
+		break;
+	    }
+	}
+	if(a<0) //same directory
+	    list.modules[i].path[0] = '\0';
     }
 
 

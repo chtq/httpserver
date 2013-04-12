@@ -512,7 +512,10 @@ int FreeParsed(tobServ_parsedFile *parsed)
 
     case PARSEDFILE_VARIABLE:
 	tobString_Free(&parsed->name);
-	break;	
+	break;
+
+    default:
+	break;
     }
 
     return 0;
