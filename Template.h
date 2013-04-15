@@ -62,8 +62,6 @@ typedef struct _tobServ_template
     tobServ_TemplateSwitch *switches;
 } tobServ_template;
 
-#include "FileCache.h" //for tobServ_file
-
 tobServ_parsedFile ParseFile(tobServ_file *file);
 tobServ_parsedFile ParseFileSubString(char *string, int size);
 int FreeParsed(tobServ_parsedFile *parsed);

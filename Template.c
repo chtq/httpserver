@@ -200,17 +200,19 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
 		if(string[i] == ']') //end found
 		{
 		    name[a] = '\0';
+
+		    i++;
 		    
 		    if(a>0) //it's only a section if the sectionname length is greater than zero
 		    {
 			tobString_Init(&sectioncontent, 512); //ALLOC SIZE OF 512
+
+			snprintf(buffer, sizeof(buffer), "[/%s]", name);
 				
 			//search for the ending
 			for(;i< ( size - a - 3) ;i++) // there still has to be enough space for the test
-			{
-			    snprintf(buffer, sizeof(buffer), "[/%s]", name);
-				    
-			    if(!strcmp(string+i, name))
+			{				    
+			    if(!strncmp(string+i, buffer, a+3)) //a+3 is the length of [/SECTIONNAME]
 			    {
 				//check if text must be added
 				if(text.len>0)
@@ -507,6 +509,7 @@ int FreeParsed(tobServ_parsedFile *parsed)
 	for(i=0;i<parsed->numparts;i++)
 	    FreeParsed(&parsed->parts[i]);
 	free(parsed->parts);
+
 	break;
 
     case PARSEDFILE_TEXT:

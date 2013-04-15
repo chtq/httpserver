@@ -51,6 +51,9 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
 //marks file as not used anymore
 int FreeFileFromFileCache(tobServ_FileCache* filecache, struct _tobServ_file* file);
 
+//returns the sum of all filesizes
+int GetTotalFileCacheSize(tobServ_FileCache* filecache);
+
 struct _tobServ_file LoadFileFromDisk(char *path);
 
 //using 0 for maxfiles or maxfilesize makes it keep the old value

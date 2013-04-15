@@ -20,6 +20,7 @@
 
 #include <tobServModule.h>
 #include <FileCache.h>
+#include <Template.h>
 #include <Sessions.h>
 
 #define VERSION "0.1"
@@ -96,6 +97,7 @@ int FreeSessions(tobServ_SessionList*);
 int StartSession(tobServ_SessionList*, char*, int);
 int GetSessionCodeFromCookie(char*);
 char *urldecode(char*);
+void commandline_printCacheList(tobServ_FileCache *filecache);
 
 int main(int argc, char *argv[])
 {
@@ -147,7 +149,7 @@ int main(int argc, char *argv[])
 	return 0;
     }
 
-    thread_num = atoi(tobCONF_GetElement(&configfile, configsection, "maxthreads"));
+    thread_num = atoi(tobCONF_GetElement(configsection, "maxthreads"));
     if(thread_num<1)
     {
 	printf("ERROR invalid value for maxthreads");
@@ -155,7 +157,7 @@ int main(int argc, char *argv[])
 	return 0;	
     }
 
-    portno = atoi(tobCONF_GetElement(&configfile, configsection, "port"));
+    portno = atoi(tobCONF_GetElement(configsection, "port"));
     if(portno<1 || portno>65536)
     {
 	printf("ERROR invalid value for port");
@@ -171,7 +173,7 @@ int main(int argc, char *argv[])
 	return 0;
     }
 
-    maxfiles = atoi(tobCONF_GetElement(&configfile, configsection, "maxfiles"));
+    maxfiles = atoi(tobCONF_GetElement(configsection, "maxfiles"));
     if(maxfiles<1)
     {
 	printf("ERROR invalid value for maxfiles");
@@ -179,7 +181,7 @@ int main(int argc, char *argv[])
 	return 0;	
     }
 
-    maxfilesize = atoi(tobCONF_GetElement(&configfile, configsection, "maxfilesize"));
+    maxfilesize = atoi(tobCONF_GetElement(configsection, "maxfilesize"));
     if(maxfilesize<1)
     {
 	printf("ERROR invalid value for maxfilesize");
@@ -997,12 +999,38 @@ void *handle_commandline(void *arg)
             free(command);
             return 0;
         }
+
+	//the readings aren't thread safe but who cares. Read operations can't destroy anything
         else if(!strcmp(command, "stats"))
             printf("tobServ %s Current Status\nThreads: %i/%i PeakThreads: %i TotalRequests: %i\n", VERSION, commandline->numthreads, commandline->maxthreads, commandline->peakthreads, commandline->numrequests);
+	else if(!strcmp(command, "cache stats"))
+	    printf("Cached Files: %i/%i with a total size of %iKB\n", commandline->filecache->numfiles, commandline->filecache->maxfiles, GetTotalFileCacheSize(commandline->filecache)/1024);
+
+	else if(!strcmp(command, "cache list"))
+	    commandline_printCacheList(commandline->filecache);
 
         free(command);
     }
     return 0;
+}
+
+void commandline_printCacheList(tobServ_FileCache *filecache)
+{
+    unsigned int i, currenttime;
+
+    currenttime = time(NULL);    
+
+    printf("%-50s%-10s%-20s%-5s\n", "Path", "Size", "LastAccess in s", "usecount"); 
+
+    pthread_rwlock_rdlock(&filecache->lock);
+    for(i=0;i<filecache->numfiles;i++)
+    {
+	printf("\n%-50s%-10i%-20i%-5i", filecache->files[i].path, filecache->files[i].file->size, currenttime-filecache->files[i].lastaccess, filecache->files[i].usecount);
+    }
+    pthread_rwlock_unlock(&filecache->lock);
+
+    if(i>0) //new line for the next cmd
+	printf("\n");
 }
 
 int FreeSessions(tobServ_SessionList *sessionlist)
@@ -1130,35 +1158,29 @@ char *urldecode(char *input)
     int i, a;
     int length;
     char buffer[3];
-    char *result;
     char replacechar;
 
     input = stringreplace(input, "+", " ");
 
     length = strlen(input);
-    result = malloc(length+1);
 
     a=0;
 
-    // length-2 because it doesn't make sense to check for %XX at the last two characters of the string
     for(i=0;i<length;i++)
     {
          if(input[i]=='%' && i<(length-2))
          {
              stringcpy(buffer, input+i+1, 3);
              replacechar = strtol(buffer, NULL, 16);
-             result[a]=replacechar;
+             input[a]=replacechar;
              i+=2;
          }
-         else
-             result[a]=input[i];
+         else if(a < i)
+             input[a]=input[i];
 
          a++;
     }
-    result[a]='\0';
-
-    strcpy(input, result);
-    free(result);
+    input[a] = '\0';
 
     return input;
 }

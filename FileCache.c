@@ -39,7 +39,7 @@ int FreeFileCache(tobServ_FileCache *filecache)
 	pthread_mutex_destroy(&filecache->files[i].filelock);
 
 	free(filecache->files[i].file->content);
-	free(filecache->files[newID].file->type);
+	free(filecache->files[i].file->type);
 	FreeParsed(&filecache->files[i].file->parsedFile);
 
 	free(filecache->files[i].path);
@@ -50,6 +50,20 @@ int FreeFileCache(tobServ_FileCache *filecache)
 	free(filecache->files);
 
     return 0;
+}
+
+int GetTotalFileCacheSize(tobServ_FileCache* filecache)
+{
+    unsigned int i, sum=0;
+    
+    pthread_rwlock_rdlock(&filecache->lock);
+
+    for(i=0;i<filecache->numfiles;i++)
+	sum += filecache->files[i].file->size;
+    
+    pthread_rwlock_unlock(&filecache->lock);
+
+    return sum;
 }
 
 struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *path, int parse)
@@ -64,6 +78,8 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
 	    result.parsedFile = ParseFile(&result);
 
 	result.cacheID = -1;
+
+	return result;
     }
     
     pthread_rwlock_rdlock(&filecache->lock);
@@ -101,7 +117,7 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
 	result.cacheID = AddFileToCache(filecache, path, result);
     }
     else
-	return *filecache->files[i].file;
+	result = *filecache->files[i].file;
 	
     return result;
 }
@@ -250,7 +266,7 @@ tobServ_file LoadFileFromDisk(char *path)
 
 int FreeFileFromFileCache(tobServ_FileCache* filecache, tobServ_file* file)
 {  
-    if(file->cacheID>0) //it is cached
+    if(file->cacheID>=0) //it is cached
     {
 	pthread_rwlock_rdlock(&filecache->lock);
 
@@ -351,7 +367,7 @@ tobServ_file get_file(tobServ_FileCache *filecache, char *path, int parse, int c
 
 int free_file(tobServ_FileCache *cache, tobServ_file *file)
 {
-    if(file->cacheID>0)
+    if(file->cacheID>=0)
 	FreeFileFromFileCache(cache, file);
     else
     {
