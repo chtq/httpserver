@@ -24,6 +24,7 @@
 #include <Sessions.h>
 
 #define VERSION "0.1"
+#define MODULEFILE "modules.cfg"
 
 typedef struct _tobServ_commandline
 {
@@ -487,15 +488,15 @@ header get_header(int connection, tobServ_thread *arg)
     unsigned int contentlength;
     unsigned int contentwritten;
     char *content = NULL;
-    char *found;
+    char *found, *getvarstring;
     char **lines;
     char **words;
 
     header result;
     char buffer[256];
-    int n,i;
+    unsigned int n,i,a;
     unsigned int headerend;
-    unsigned int numlines;
+    unsigned int numlines, num;
     unsigned int numwords;
 
     size=512;
@@ -665,7 +666,8 @@ header get_header(int connection, tobServ_thread *arg)
     if(!strcmp(result.method, "POST") && content)
     {
         result.numpostdata = explode(&lines, content, "&");
-        result.postdata = malloc(sizeof(tobServ_PostData)*result.numpostdata);
+	if(result.numpostdata)
+	    result.postdata = malloc(sizeof(tobServ_PostData)*result.numpostdata);
 
         for(i=0; i<result.numpostdata; i++)
         {
@@ -691,7 +693,7 @@ header get_header(int connection, tobServ_thread *arg)
                 strcpy(result.postdata[i].name, words[0]);
                 result.postdata[i].value = malloc(sizeof(char)*(strlen(words[1])+1));
                 strcpy(result.postdata[i].value, words[1]);
-                result.postdata[i].value = urldecode(result.postdata[i].value);
+                urldecode(result.postdata[i].value);
             }
 
             free(words);
@@ -702,6 +704,45 @@ header get_header(int connection, tobServ_thread *arg)
         lines = NULL;
     }
 
+//parse get variables
+result.getdata = NULL;
+result.numgetdata = 0;
+
+if((getvarstring = strchr(result.path, '?')))
+{
+    getvarstring++;//skip the "?"
+	
+    num = result.numgetdata = explode(&lines, getvarstring, "&");
+    if(result.numgetdata)
+	    result.getdata = malloc(sizeof(tobServ_GetData)*result.numgetdata);
+
+	a=0;
+	for(i=0;i<num;i++)
+	{
+	    numwords = explode(&words, lines[i], "=");
+
+            if(numwords!=2)
+            {
+		//invalid get variable
+                result.numgetdata--;
+		result.getdata = realloc(result.getdata, sizeof(tobServ_GetData)*result.numgetdata);
+            }
+            else
+            {
+                result.getdata[a].name = malloc(sizeof(char)*(strlen(words[0])+1));
+                strcpy(result.getdata[a].name, words[0]);
+                result.getdata[a].value = malloc(sizeof(char)*(strlen(words[1])+1));
+                strcpy(result.getdata[a].value, words[1]);
+                urldecode(result.getdata[a].value);
+		a++;
+            }
+	    free(words);
+	    words = NULL;
+	}
+	
+	free(lines);
+	lines = NULL;
+    }
 
     if(headerstring)
         free(headerstring);
@@ -747,143 +788,65 @@ void send_response(int connection, char *type, char *content, int size, int sess
 
 tobServ_modulelist LoadModules(char *path)
 {
-    FILE *fp;
-    int size;
     int i, a;
-    char *line;
-    char *rest, *error;
-    int result;
-    char *buffer, *originalbuffer;
     char logger[1024];
+    char *name, *modulepath, *error;
     tobServ_modulelist list;
+    tobCONF_File modulefile;
+    tobCONF_Section *configsection;
 
-    fp = fopen(path, "rb");
-
-    if(!fp)
+    //get the modules from file
+    if(tobCONF_ReadFile(&modulefile, MODULEFILE)<0)
     {
-        write_log("error.txt", "ERROR on loading ModuleList, couldn't open file");
-        list.count = -1;
-
-        return list;
+	snprintf(logger, sizeof(logger), "ERROR on loading moduleconfigfile: %s", tobCONF_GetLastError(&modulefile));
+	write_log("error.txt", logger);
+	list.modules = NULL;
+	list.count = -1;
+	
+	return list;
     }
-
-    fseek(fp, 0, SEEK_END);
-    size = ftell(fp);
-    rewind (fp);
-
-    buffer = malloc(size+1);
-
-    result = fread(buffer,1,size,fp);
-    if(result != size)
-    {
-        free(buffer);
-        buffer = NULL;
-
-        write_log("error.txt", "ERROR on loading ModuleList, couldn't read everything\n");
-        list.count = -1;
-
-        return list;
-    }
-    fclose(fp);
-
-    buffer[size] = '\0';
 
     list.count = 0;
     list.modules = NULL;
 
-    originalbuffer = buffer;
+    configsection = tobCONF_GetFirstSection(&modulefile);
 
-
-    line = strtok_r(buffer, "\n", &rest);
-
-    while(line != NULL)
+    if(configsection)
     {
-        i = 0;
+	do
+	{
+	    name = tobCONF_GetElement(configsection, "name");
+	    modulepath = tobCONF_GetElement(configsection, "path");
 
-        if(!(line[i]=='\r' || line[i]=='#'))
-        {
-            list.count++;
-            list.modules = realloc(list.modules, sizeof(tobServ_module)*list.count);
+	    if(name && path)
+	    {
+		list.count++;
+		list.modules = realloc(list.modules, sizeof(tobServ_module)*list.count);
 
-            while(line[i] == ' ')
-                i++;
-
-            if(isalnum(line[i]))
-            {
-                for(a=0; isalnum(line[i]); a++)
-                {
-                    if(a>126)
-                    {
-                        free(list.modules);
-                        list.modules = NULL;
-
-                        list.count = -1;
-                        write_log("error.txt", "ERROR on parsing modules");
-                        return list;
-                    }
-                    list.modules[list.count-1].name[a] = line[i];
-                    i++;
-                }
-                list.modules[list.count-1].name[a] = '\0';
-
-                while(line[i] == ' ')
-                    i++;
-
-                if(isalnum(line[i]))
-                {
-                    for(a=0; line[i]!=' ' && line[i]!='\n'; a++)
-                    {
-                        if(a>254)
-                        {
-                            free(list.modules);
-                            list.modules = NULL;
-
-                            list.count = -1;
-                            write_log("error.txt", "ERROR on parsing modules");
-                            return list;
-                        }
-                        list.modules[list.count-1].path[a] = line[i];
-                        i++;
-                    }
-                    list.modules[list.count-1].path[a] = '\0';
-                }
-                else
-                {
-                    free(list.modules);
-                    list.modules = NULL;
-
-                    list.count = -1;
-                    write_log("error.txt", "ERROR on parsing modules");
-                    return list;
-                }
-            }
-            else
-            {
-                free(list.modules);
-                list.modules = NULL;
-
-                list.count = -1;
-                write_log("error.txt", "ERROR on parsing modules");
-                return list;
-            }
-        }
-        line = strtok_r(NULL, "\n", &rest);
+		stringcpy(list.modules[list.count-1].name, name, sizeof(list.modules[list.count-1].name));
+		stringcpy(list.modules[list.count-1].path, modulepath, sizeof(list.modules[list.count-1].path));
+	    }
+	    else
+	    {
+		snprintf(logger, sizeof(logger), "ERROR on loading module in section \"%s\"", tobCONF_GetSectionName(configsection));
+		write_log("error.txt", logger);
+	    }
+	} while((configsection = tobCONF_GetNextSection(&modulefile)));
     }
 
-    free(originalbuffer);
-    originalbuffer = NULL;
-
-    snprintf(logger, 1024, "%i modules successfully parsed", list.count);
+    snprintf(logger, sizeof(logger), "%i modules successfully parsed", list.count);
     write_log("log.txt", logger);
 
-    dlerror();
+    //load modules
+    dlerror(); //reset error var
     for(i=0; i<list.count; i++)
     {
         list.modules[i].handle = dlopen(list.modules[i].path, RTLD_LAZY);
 
-        if((error = dlerror()) != NULL)
+	error = dlerror();
+        if(error)
         {
-            snprintf(logger, 1024, "failed on loading module: %s, REASON: %s", list.modules[i].name, error);
+            snprintf(logger, sizeof(logger), "failed on loading module: %s, REASON: %s", list.modules[i].name, error);
             write_log("error.txt", logger);
 
             free(list.modules);
@@ -920,6 +883,8 @@ tobServ_modulelist LoadModules(char *path)
 	    list.modules[i].path[0] = '\0';
     }
 
+    snprintf(logger, sizeof(logger), "%i modules successfully loaded", list.count);
+    write_log("log.txt", logger);
 
     return list;
 }

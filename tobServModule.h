@@ -13,6 +13,12 @@ typedef struct _tobServ_PostData
     char *value;
 } tobServ_PostData;
 
+typedef struct _tobServ_GetData
+{
+    char *name;
+    char *value;
+} tobServ_GetData;
+
 typedef struct _tobServ_HeaderInfo
 {
     char name[64];
@@ -29,6 +35,8 @@ typedef struct _header
     tobServ_HeaderInfo *infos;
     unsigned int numpostdata;
     tobServ_PostData *postdata;
+    unsigned int numgetdata;
+    tobServ_GetData *getdata;
 } header;
 
 struct _tobServ_SessionList;
