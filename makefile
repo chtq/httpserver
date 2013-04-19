@@ -6,7 +6,7 @@ VERSION = 1.0.0
 
 CC = gcc
 CFLAGS = -g -Wall
-CFLAGSAPI = -g -Wall -shared -W1,-soname,libtobServAPI.so.$(VERSION)
+CFLAGSAPI = -g -Wall -shared -Wl,-soname,libtobServAPI.so.$(VERSION)
 LDFLAGS = -lmysqlclient -lpthread -ldl -lreadline -ltobFUNC -ltobCONF -ltobServAPI
 LDFLAGSAPI = -lmysqlclient -lpthread -ldl -lreadline -ltobFUNC -ltobCONF
 
