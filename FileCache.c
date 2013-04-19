@@ -111,10 +111,13 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
     if(i==filecache->numfiles) //file not found in cache
     {
 	result = LoadFileFromDisk(path);
-	if(parse)
-	    result.parsedFile = ParseFile(&result);
+	if(result.content)
+	{
+	    if(parse)
+		result.parsedFile = ParseFile(&result);
 
-	result.cacheID = AddFileToCache(filecache, path, result);
+	    result.cacheID = AddFileToCache(filecache, path, result);
+	}
     }
     else
 	result = *filecache->files[i].file;
@@ -354,7 +357,7 @@ tobServ_file get_file(tobServ_FileCache *filecache, char *path, int parse, int c
 	result.parsedFile.type = 0;
 	result.cacheID = -1;
 
-	if(parse)
+	if(parse && result.content)
 	    result.parsedFile = ParseFile(&result);
 	else
 	    result.parsedFile.type = -1;
@@ -395,6 +398,8 @@ int get_file_type(char *type, int size, char *path)
         temptype = "application/octet-stream";
     else if(!strcmp((ending+1), "html") || !strcmp((ending+1), "htm"))
         temptype = "text/html";
+    else if(!strcmp((ending+1), "css"))
+        temptype = "text/css";
     else if(!strcmp((ending+1), "jpeg") || !strcmp((ending+1), "jpg") || !strcmp((ending+1), "jpe"))
         temptype = "image/jpeg";
     else if(!strcmp((ending+1), "gif"))
