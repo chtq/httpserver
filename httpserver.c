@@ -966,10 +966,22 @@ int FreeHeader(header result)
 
         if(result.postdata[i].value)
             free(result.postdata[i].value);
-    }
+    }    
 
     if(result.postdata)
         free(result.postdata);
+
+    for(i=0; i<result.numgetdata; i++)
+    {
+        if(result.getdata[i].name)
+            free(result.getdata[i].name);
+
+        if(result.getdata[i].value)
+            free(result.getdata[i].value);
+    }    
+
+    if(result.getdata)
+        free(result.getdata);
 
     return 0;
 }
@@ -1157,8 +1169,6 @@ char *urldecode(char *input)
     char buffer[3];
     char replacechar;
 
-    input = stringreplace(input, "+", " ");
-
     length = strlen(input);
 
     a=0;
@@ -1172,6 +1182,8 @@ char *urldecode(char *input)
              input[a]=replacechar;
              i+=2;
          }
+	 else if(input[i]=='+')
+	     input[a] = ' ';
          else if(a < i)
              input[a]=input[i];
 
