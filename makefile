@@ -15,7 +15,7 @@ all: httpserver clean
 httpserver: httpserver.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-API: FileCache.o Sessions.o PostVar.o Template.o tobServModule.o
+API: FileCache.o Sessions.o PostVar.o GetVar.o Template.o tobServModule.o
 	$(CC) $(CFLAGSAPI) -o libtobServAPI.so.$(VERSION) $^ $(LDFLAGSAPI)
 
 FileCache.o: FileCache.c FileCache.h Template.h
