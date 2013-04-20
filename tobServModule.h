@@ -58,6 +58,7 @@ typedef struct _tobServ_response
 {
     char *response;
     char *type;
+    int code;
     int usecache;
     int length;
 } tobServ_response;

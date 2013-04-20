@@ -85,7 +85,7 @@ void write_log(char *file, char *string)
 }
 
 void *handle_request(void *arg);
-void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache);
+void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code);
 header get_header(int connection, tobServ_thread*);
 tobServ_modulelist LoadModules(char *path);
 int FreeModules(tobServ_modulelist);
@@ -440,17 +440,17 @@ void *handle_request(void *arg)
                 }
                 else
                 {
-                    send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache);
+                    send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache, response.code);
                     FreeResponse(response);
                     break;
                 }
             }
         }
         if(i==((tobServ_thread*)arg)->modulelist.count)
-            send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0);
+            send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404);
     }
     else
-        send_response(connection, "text/html", "Invalid action", strlen("Invalid action"), ((tobServ_thread*)arg)->querry.code, 0);
+        send_response(connection, "text/html", "Invalid action", strlen("Invalid action"), ((tobServ_thread*)arg)->querry.code, 0, 400);
 
 
 
@@ -755,16 +755,48 @@ if((getvarstring = strchr(result.path, '?')))
     return result;
 }
 
-void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache)
+void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code)
 {
     char headerstring[256];
     int totalsent, sent;
+    char *status, *cache;
+
+    switch(code)
+    {
+    case 200:
+	status = "200 OK";
+	break;
+    case 303:
+	status = "303 Moved Permanently";
+	break;
+    case 400:
+	status = "400 Bad Request";
+	break;
+    case 401:
+	status = "401 Unauthorized";
+	break;
+    case 403:
+	status = "402 Forbidden";
+	break;
+    case 404:
+	status = "404 Not Found";
+	break;
+    case 503:
+	status = "503 Service Unavailable";
+	break;
+    case 451:
+	status = "451 Unavailable For Legal Reasons";
+	break;
+    }
 
     headerstring[0] = '\0';
     if(usecache)
-        snprintf(headerstring, 256, "HTTP/1.1 200 OK\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\nCache-Control: max-age=10000\r\nContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", VERSION, sessioncode, size, type);
+	cache = "Cache-Control: max-age=10000\r\n";
     else
-        snprintf(headerstring, 256, "HTTP/1.1 200 OK\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\nContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", VERSION, sessioncode, size, type);
+	cache = "";
+
+    
+    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);
 
     write(connection,headerstring,strlen(headerstring));
 
