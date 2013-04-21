@@ -27,6 +27,9 @@ Sessions.o: Sessions.c Sessions.h tobServModule.h
 PostVar.o: PostVar.c PostVar.h tobServModule.h
 	$(CC) -fPIC -c $(CFLAGS) $<
 
+GetVar.o: GetVar.c GetVar.h tobServModule.h
+	$(CC) -fPIC -c $(CFLAGS) $<
+
 Template.o: Template.c Template.h
 	$(CC) -fPIC -c $(CFLAGS) $<
 
