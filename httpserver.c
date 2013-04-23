@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
     write_log("log.txt", "Server was successfully started");
 
     while (!commandline.doshutdown)
-    {
+    {       
         errno = 0;
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
         if (newsockfd < 0)
@@ -280,8 +280,8 @@ int main(int argc, char *argv[])
                     threads[i].querry.time = time(NULL);
                     threads[i].commandline = &commandline;
                     threads[i].querry.sessionlist = &sessionlist;
-		    threads[i].querry.filecache = &filecache;
-
+		            threads[i].querry.filecache = &filecache;
+                    
                     pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i]);
 
                     break;
@@ -291,7 +291,7 @@ int main(int argc, char *argv[])
             {
                 close(newsockfd);
             }
-        }
+        }   
     }
 
     done = 0;
@@ -354,6 +354,7 @@ void *handle_request(void *arg)
     connection = ((tobServ_thread*)arg)->connection;
 
     request = get_header(connection, arg);
+    
     if(!request.success)
     {
         close(connection);
@@ -375,8 +376,14 @@ void *handle_request(void *arg)
     ((tobServ_thread*)arg)->querry.requestheader = &request;  
 
     pathclone = malloc(strlen(request.path)+1);
-
     stringcpy(pathclone, request.path, strlen(request.path)+1);
+
+    // access logger
+    time_t rawtime;
+    time(&rawtime);
+    char log[512];
+    snprintf(log, sizeof(log), "%.24s %s %s %s", ctime(&rawtime), ((tobServ_thread*)arg)->querry.IP, request.method, request.path);
+    write_log("access.log", log);
 
     module = pathclone+1;
     action = NULL;
@@ -545,6 +552,10 @@ header get_header(int connection, tobServ_thread *arg)
     {
         result.numinfos = 0;
         stringcpy(result.method, "INVALID", sizeof(result.method));
+        stringcpy(result.path, "DROPPED", sizeof(result.path));
+        result.success = 0;
+        free(lines);
+        lines = NULL;
     }
     else
     {
@@ -553,6 +564,8 @@ header get_header(int connection, tobServ_thread *arg)
         {
             result.numinfos = 0;
             stringcpy(result.method, "INVALID", sizeof(result.method));
+            stringcpy(result.path, "DROPPED", sizeof(result.path));
+            result.success = 0;
             free(lines);
             free(words);
             lines = NULL;
@@ -582,8 +595,10 @@ header get_header(int connection, tobServ_thread *arg)
                 {
                     result.numinfos = 0;
                     stringcpy(result.method, "INVALID", sizeof(result.method));
+                    stringcpy(result.path, "DROPPED", sizeof(result.path));
                     free(result.infos);
                     result.infos = NULL;
+                    result.success = 0;
 
                     free(words);
                     words = NULL;
@@ -635,9 +650,12 @@ header get_header(int connection, tobServ_thread *arg)
                 {
                     result.numinfos = 0;
                     stringcpy(result.method, "INVALID", sizeof(result.method));
+                    stringcpy(result.path, "DROPPED", sizeof(result.path));
+                    result.success = 0;
                     free(result.infos);
                     result.infos = NULL;
-
+                    free(lines);
+                    lines = NULL;
                     free(words);
                     words = NULL;
                     free(content);
@@ -681,7 +699,8 @@ header get_header(int connection, tobServ_thread *arg)
                 result.postdata = NULL;
 
                 stringcpy(result.method, "INVALID", sizeof(result.method));
-
+                stringcpy(result.path, "DROPPED", sizeof(result.path));
+                result.success = 0;
                 free(words);
                 words = NULL;
 
@@ -927,7 +946,7 @@ int FreeModules(tobServ_modulelist list)
 
     for(i=0; i < list.count; i++)
     {
-        //dlclose(list.modules[i].handle);
+        dlclose(list.modules[i].handle);
     }
 
     if(list.modules)
@@ -1007,6 +1026,13 @@ void *handle_commandline(void *arg)
             pthread_kill(commandline->mainthreadID, SIGTERM);
             free(command);
             return 0;
+        }
+
+        else if(!strcmp(command, "reload"))
+        {
+            // TODO: Modulereload  
+            printf("reloading modules\n");
+            //commandline->domodulereload = 1;  
         }
 
 	//the readings aren't thread safe but who cares. Read operations can't destroy anything
@@ -1193,5 +1219,4 @@ char *urldecode(char *input)
 
     return input;
 }
-
 
