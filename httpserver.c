@@ -138,56 +138,57 @@ int main(int argc, char *argv[])
 
     if(tobCONF_ReadFile(&configfile, "server.cfg")<0)
     {
-	printf("ERROR on reading ConfigFile: %s", tobCONF_GetLastError(&configfile));
+	    printf("ERROR on reading ConfigFile: %s", tobCONF_GetLastError(&configfile));
+        tobCONF_Free(&configfile);
         return 0;
     }
 
     configsection = tobCONF_GetSection(&configfile, "server");
     if(!configsection)
     {
-	printf("ERROR config section \"server\" doesn't exist");
-	tobCONF_Free(&configfile);
-	return 0;
+	    printf("ERROR config section \"server\" doesn't exist");
+	    tobCONF_Free(&configfile);
+	    return 0;
     }
 
     thread_num = atoi(tobCONF_GetElement(configsection, "maxthreads"));
     if(thread_num<1)
     {
-	printf("ERROR invalid value for maxthreads");
-	tobCONF_Free(&configfile);
-	return 0;	
+	    printf("ERROR invalid value for maxthreads");
+	    tobCONF_Free(&configfile);
+	    return 0;	
     }
 
     portno = atoi(tobCONF_GetElement(configsection, "port"));
     if(portno<1 || portno>65536)
     {
-	printf("ERROR invalid value for port");
-	tobCONF_Free(&configfile);
-	return 0;	
+	    printf("ERROR invalid value for port");
+	    tobCONF_Free(&configfile);
+	    return 0;	
     }
 
     configsection = tobCONF_GetSection(&configfile, "Cache");
     if(!configsection)
     {
-	printf("ERROR config section \"Cache\" doesn't exist");
-	tobCONF_Free(&configfile);
-	return 0;
+	    printf("ERROR config section \"Cache\" doesn't exist");
+	    tobCONF_Free(&configfile);
+	    return 0;
     }
 
     maxfiles = atoi(tobCONF_GetElement(configsection, "maxfiles"));
     if(maxfiles<1)
     {
-	printf("ERROR invalid value for maxfiles");
-	tobCONF_Free(&configfile);
-	return 0;	
+	    printf("ERROR invalid value for maxfiles");
+	    tobCONF_Free(&configfile);
+	    return 0;	
     }
 
     maxfilesize = atoi(tobCONF_GetElement(configsection, "maxfilesize"));
     if(maxfilesize<1)
     {
-	printf("ERROR invalid value for maxfilesize");
-	tobCONF_Free(&configfile);
-	return 0;	
+	    printf("ERROR invalid value for maxfilesize");
+	    tobCONF_Free(&configfile);
+	    return 0;	
     }
 
     tobCONF_Free(&configfile);
@@ -849,12 +850,12 @@ tobServ_modulelist LoadModules(char *path)
     //get the modules from file
     if(tobCONF_ReadFile(&modulefile, MODULEFILE)<0)
     {
-	snprintf(logger, sizeof(logger), "ERROR on loading moduleconfigfile: %s", tobCONF_GetLastError(&modulefile));
-	write_log("error.txt", logger);
-	list.modules = NULL;
-	list.count = -1;
-	
-	return list;
+	    snprintf(logger, sizeof(logger), "ERROR on loading moduleconfigfile: %s", tobCONF_GetLastError(&modulefile));
+	    write_log("error.txt", logger);
+	    list.modules = NULL;
+	    list.count = -1;
+	    tobCONF_Free(&modulefile);
+	    return list;
     }
 
     list.count = 0;
@@ -887,7 +888,7 @@ tobServ_modulelist LoadModules(char *path)
 
     snprintf(logger, sizeof(logger), "%i modules successfully parsed", list.count);
     write_log("log.txt", logger);
-
+    tobCONF_Free(&modulefile);
     //load modules
     dlerror(); //reset error var
     for(i=0; i<list.count; i++)
@@ -943,7 +944,6 @@ tobServ_modulelist LoadModules(char *path)
 int FreeModules(tobServ_modulelist list)
 {
     int i;
-
     for(i=0; i < list.count; i++)
     {
         dlclose(list.modules[i].handle);
