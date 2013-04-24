@@ -86,6 +86,7 @@ void write_log(char *file, char *string)
 
 void *handle_request(void *arg);
 void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code);
+void send_redirect(int connection, char *content, int sessioncode, int code);
 header get_header(int connection, tobServ_thread*);
 tobServ_modulelist LoadModules(char *path);
 int FreeModules(tobServ_modulelist);
@@ -290,6 +291,7 @@ int main(int argc, char *argv[])
             }
             if(i==thread_num) //no open slots close the connection
             {
+                                
                 close(newsockfd);
             }
         }   
@@ -777,18 +779,16 @@ if((getvarstring = strchr(result.path, '?')))
 
 void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code)
 {
-    char headerstring[256];
-    int totalsent, sent;
-    char *status, *cache;
-
+    char *status, *cache;    
     switch(code)
     {
     case 200:
 	status = "200 OK";
 	break;
-    case 303:
-	status = "303 Moved Permanently";
-	break;
+    case 301:
+    case 302:
+	send_redirect(connection, content, sessioncode, code);
+	return;
     case 400:
 	status = "400 Bad Request";
 	break;
@@ -808,6 +808,10 @@ void send_response(int connection, char *type, char *content, int size, int sess
 	status = "451 Unavailable For Legal Reasons";
 	break;
     }
+    
+    char headerstring[256];
+    int totalsent, sent;
+    
 
     headerstring[0] = '\0';
     if(usecache)
@@ -815,12 +819,11 @@ void send_response(int connection, char *type, char *content, int size, int sess
     else
 	cache = "";
 
-    
-    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);
+    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);    
 
     write(connection,headerstring,strlen(headerstring));
 
-    sent = send(connection,content,size, MSG_NOSIGNAL);
+    sent = send(connection,content,size, MSG_NOSIGNAL);  
 
     if(sent<0)
         return;
@@ -837,6 +840,20 @@ void send_response(int connection, char *type, char *content, int size, int sess
         totalsent += sent;
     }
 }
+void send_redirect(int connection, char *content, int sessioncode, int code) // redirect-location will be transmitted via content
+{
+    char *status;
+    char headerstring[256];
+    if (code == 301)
+        status = "301 Moved Permanently";
+    else
+        status = "302 Found";
+
+    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nLocation:%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\nConnection: close\r\n\r\n", status, VERSION, content, sessioncode);
+    write(connection,headerstring,strlen(headerstring));
+    return;
+}
+
 
 tobServ_modulelist LoadModules(char *path)
 {
