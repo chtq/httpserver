@@ -18,6 +18,9 @@ httpserver: httpserver.o
 API: FileCache.o Sessions.o PostVar.o GetVar.o Template.o tobServModule.o
 	$(CC) $(CFLAGSAPI) -o libtobServAPI.so.$(VERSION) $^ $(LDFLAGSAPI)
 
+ModuleManager.o: ModuleManager.c ModuleManager.h
+	$(CC) -fPIC -c $(CFLAGS) $<
+
 FileCache.o: FileCache.c FileCache.h Template.h
 	$(CC) -fPIC -c $(CFLAGS) $<
 
@@ -36,7 +39,7 @@ Template.o: Template.c Template.h
 tobServModule.o: tobServModule.c tobServModule.h
 	$(CC) -fPIC -c $(CFLAGS) $<
 
-httpserver.o: httpserver.c tobServModule.h FileCache.h Sessions.h
+httpserver.o: httpserver.c tobServModule.h FileCache.h Sessions.h ModuleManager.h ModuleManager.o
 	$(CC) -c $(CFLAGS) $<
 
 installAPI: libtobServAPI.so.$(VERSION)

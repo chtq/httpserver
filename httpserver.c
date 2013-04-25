@@ -9,7 +9,6 @@
 #include <signal.h>
 #include <pthread.h>
 #include <ctype.h>
-#include <dlfcn.h>
 #include <errno.h>
 #include <unistd.h>
 #include <readline/readline.h>
@@ -23,6 +22,9 @@
 #include <Template.h>
 #include <Sessions.h>
 
+#include "logger.h"
+#include "ModuleManager.h"
+
 #define VERSION "0.1"
 #define MODULEFILE "modules.cfg"
 
@@ -31,8 +33,8 @@ typedef struct _tobServ_commandline
     pthread_t mainthreadID;
     pthread_t commandthreadID;
     int doshutdown;
-    int domodulereload;
 
+    tobServ_modulelist *modulelist;
     tobServ_FileCache *filecache;
 
     int numthreads;
@@ -42,22 +44,6 @@ typedef struct _tobServ_commandline
     pthread_mutex_t commandline_mutex;
 } tobServ_commandline;
 
-typedef struct _tobServ_module
-{
-    char name[128];
-    char path[256];
-    void *handle;
-
-    module_QUERRY_function querry_function;
-
-} tobServ_module;
-
-typedef struct _tobServ_modulelist
-{
-    tobServ_module *modules;
-    int count;
-} tobServ_modulelist;
-
 typedef struct _tobServ_thread
 {
     pthread_t threadID;
@@ -66,7 +52,7 @@ typedef struct _tobServ_thread
     int last_active;
     pthread_cond_t *finished;
     pthread_mutex_t *mutex;
-    tobServ_modulelist modulelist;
+    tobServ_modulelist *modulelist;
     tobServ_Querry querry;
     tobServ_commandline *commandline;
 } tobServ_thread;
@@ -77,19 +63,10 @@ void error(char *msg)
     exit(1);
 }
 
-void write_log(char *file, char *string)
-{
-    //awesome log function needed
-    printf("%s: %s\n", file, string);
-    return;
-}
-
 void *handle_request(void *arg);
 void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code);
 void send_redirect(int connection, char *content, int sessioncode, int code);
 header get_header(int connection, tobServ_thread*);
-tobServ_modulelist LoadModules(char *path);
-int FreeModules(tobServ_modulelist);
 int FreeResponse(tobServ_response);
 int FreeResult(header result);
 void *handle_commandline(void *arg);
@@ -212,10 +189,10 @@ int main(int argc, char *argv[])
     bzero((char *)threads, sizeof(tobServ_thread)*thread_num);
 
     //LOADING MODULES
-    modulelist = LoadModules("modules.cfg");
-
-    if(modulelist.count < 0)
-        error("ERROR on loading modules");
+    if(LoadModules(&modulelist, MODULEFILE)<0)
+        printf("ERROR on loading modules, try reload and check your log file");
+    else
+	printf("%i modules were successfully loaded", modulelist->count);
 
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -240,6 +217,7 @@ int main(int argc, char *argv[])
     commandline.numthreads = 0;
     commandline.peakthreads = 0;
     commandline.mainthreadID = pthread_self();
+    commandline.modulelist = &modulelist;
 
     pthread_mutex_init(&commandline.commandline_mutex, NULL);
 
@@ -258,7 +236,6 @@ int main(int argc, char *argv[])
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
         if (newsockfd < 0)
         {
-
             if(errno == EINTR)
                 continue;
             else
@@ -282,7 +259,7 @@ int main(int argc, char *argv[])
                     threads[i].querry.time = time(NULL);
                     threads[i].commandline = &commandline;
                     threads[i].querry.sessionlist = &sessionlist;
-		            threads[i].querry.filecache = &filecache;
+		    threads[i].querry.filecache = &filecache;
                     
                     pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i]);
 
@@ -432,6 +409,8 @@ void *handle_request(void *arg)
     ((tobServ_thread*)arg)->querry.code = newcode;
     stringcpy(((tobServ_thread*)arg)->querry.module, module, 128);
 
+    pthread_rwlock_rdlock(&((tobServ_thread*)arg)->modulelist.lock);
+
     if((!strcmp(request.method, "GET") || !strcmp(request.method, "POST")) && (pathclone[0] == '\0' || pathclone[0] == '/'))
     {
         for(i=0; i<((tobServ_thread*)arg)->modulelist.count; i++)
@@ -441,7 +420,9 @@ void *handle_request(void *arg)
 		//store module path		
 		strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist.modules[i].path);
 		    
-                response = ((tobServ_thread*)arg)->modulelist.modules[i].querry_function(((tobServ_thread*)arg)->querry, action);
+                response = ((tobServ_thread*)arg)->modulelist.modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist.modules[i].data);
+
+		pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist.lock);
 
                 if(!response.response || !response.type)
                 {
@@ -461,6 +442,8 @@ void *handle_request(void *arg)
     }
     else
         send_response(connection, "text/html", "Invalid action", strlen("Invalid action"), ((tobServ_thread*)arg)->querry.code, 0, 400);
+
+    pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist.lock);
 
 
 
@@ -854,127 +837,6 @@ void send_redirect(int connection, char *content, int sessioncode, int code) // 
     return;
 }
 
-
-tobServ_modulelist LoadModules(char *path)
-{
-    int i, a;
-    char logger[1024];
-    char *name, *modulepath, *error;
-    tobServ_modulelist list;
-    tobCONF_File modulefile;
-    tobCONF_Section *configsection;
-
-    //get the modules from file
-    if(tobCONF_ReadFile(&modulefile, MODULEFILE)<0)
-    {
-	    snprintf(logger, sizeof(logger), "ERROR on loading moduleconfigfile: %s", tobCONF_GetLastError(&modulefile));
-	    write_log("error.txt", logger);
-	    list.modules = NULL;
-	    list.count = -1;
-	    tobCONF_Free(&modulefile);
-	    return list;
-    }
-
-    list.count = 0;
-    list.modules = NULL;
-
-    configsection = tobCONF_GetFirstSection(&modulefile);
-
-    if(configsection)
-    {
-	do
-	{
-	    name = tobCONF_GetElement(configsection, "name");
-	    modulepath = tobCONF_GetElement(configsection, "path");
-
-	    if(name && path)
-	    {
-		list.count++;
-		list.modules = realloc(list.modules, sizeof(tobServ_module)*list.count);
-
-		stringcpy(list.modules[list.count-1].name, name, sizeof(list.modules[list.count-1].name));
-		stringcpy(list.modules[list.count-1].path, modulepath, sizeof(list.modules[list.count-1].path));
-	    }
-	    else
-	    {
-		snprintf(logger, sizeof(logger), "ERROR on loading module in section \"%s\"", tobCONF_GetSectionName(configsection));
-		write_log("error.txt", logger);
-	    }
-	} while((configsection = tobCONF_GetNextSection(&modulefile)));
-    }
-
-    snprintf(logger, sizeof(logger), "%i modules successfully parsed", list.count);
-    write_log("log.txt", logger);
-    tobCONF_Free(&modulefile);
-    //load modules
-    dlerror(); //reset error var
-    for(i=0; i<list.count; i++)
-    {
-        list.modules[i].handle = dlopen(list.modules[i].path, RTLD_LAZY);
-
-	error = dlerror();
-        if(error)
-        {
-            snprintf(logger, sizeof(logger), "failed on loading module: %s, REASON: %s", list.modules[i].name, error);
-            write_log("error.txt", logger);
-
-            free(list.modules);
-            list.modules = NULL;
-
-            list.count = -1;
-            return list;
-        }
-
-        dlerror();
-        list.modules[i].querry_function = dlsym(list.modules[i].handle, "tobModule_QuerryFunction");
-        if(dlerror()!=NULL)
-        {
-            snprintf(logger, 1024, "failed on loading tobModule_QuerryFunction from %s", list.modules[i].name);
-            write_log("error.txt", logger);
-
-            free(list.modules);
-            list.modules = NULL;
-
-            list.count = -1;
-            return list;
-        }
-
-	//remove the filename from path ex modules/test/test.so to modules/test/ to have a useable relativ path	
-	for(a=strlen(list.modules[i].path) ; a>=0 ; a--)
-	{
-	    if(list.modules[i].path[a] == '/')
-	    {
-		list.modules[i].path[a+1] = '\0';
-		break;
-	    }
-	}
-	if(a<0) //same directory
-	    list.modules[i].path[0] = '\0';
-    }
-
-    snprintf(logger, sizeof(logger), "%i modules successfully loaded", list.count);
-    write_log("log.txt", logger);
-
-    return list;
-}
-
-int FreeModules(tobServ_modulelist list)
-{
-    int i;
-    for(i=0; i < list.count; i++)
-    {
-        dlclose(list.modules[i].handle);
-    }
-
-    if(list.modules)
-        free(list.modules);
-
-    list.modules = NULL;
-    list.count = 0;
-
-    return 0;
-}
-
 int FreeResponse(tobServ_response response)
 {
     if(response.response)
@@ -1060,6 +922,14 @@ void *handle_commandline(void *arg)
 
 	else if(!strcmp(command, "cache list"))
 	    commandline_printCacheList(commandline->filecache);
+	else if(!strcmp(command, "reload"))
+	{
+	    FreeModules(commandline->modulelist);
+	    if(LoadModules(commandline->modulelist, MODULEFILE) < 0)
+		printf("Loading modules failed\n");
+	    else
+		printf("%i Modules were successfully loaded\n", commandline->modulelist->count);		
+	}
 
         free(command);
     }

@@ -24,7 +24,7 @@ typedef struct _tobServ_FileCache
 {
     int maxfiles;
     int maxfilesize;
-    int active; //specifies if it should be used right now
+    int active; //specifies if it can be used right now
     
     int numfiles;
     tobServ_CachedFile *files;

@@ -63,7 +63,20 @@ typedef struct _tobServ_response
     int length;
 } tobServ_response;
 
-typedef tobServ_response (*module_QUERRY_function)(tobServ_Querry querry, char *action);
+//action contains the requested path
+//querry is filled with the query
+//returns a response
+typedef tobServ_response (*module_QUERRY_function)(tobServ_Querry querry, char *action, void *data);
+
+//returns 0 on success
+//-1 on failure. If Init failed it won't be added to the modulelist
+//data can be filled with data
+typedef int (*module_INIT_function)(char *modulename, char *modulepath, void **data);
+
+//returns 0 on success
+//-1 on failure. Failure will be ignored by the server
+//data is the data pointer from Init
+typedef int (*module_DESTROY_function)(char *modulename, char *modulepath, void *data);
 
 //allocates space for the output, must be freed
 char *tobServ_FormRelativePath(tobServ_Querry *querry, char *path);
