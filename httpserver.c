@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
     if(LoadModules(&modulelist, MODULEFILE)<0)
         printf("ERROR on loading modules, try reload and check your log file");
     else
-	printf("%i modules were successfully loaded", modulelist->count);
+	printf("%i modules were successfully loaded", modulelist.count);
 
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -210,7 +210,6 @@ int main(int argc, char *argv[])
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-    commandline.domodulereload = 0;
     commandline.doshutdown = 0;
     commandline.maxthreads = thread_num;
     commandline.numrequests = 0;
@@ -254,7 +253,7 @@ int main(int argc, char *argv[])
                     threads[i].last_active = time(NULL);
                     threads[i].finished = &thread_finished;
                     threads[i].mutex = &mutex_finished;
-                    threads[i].modulelist = modulelist;
+                    threads[i].modulelist = &modulelist;
                     stringcpy(threads[i].querry.IP, IP, 20);
                     threads[i].querry.time = time(NULL);
                     threads[i].commandline = &commandline;
@@ -290,7 +289,7 @@ int main(int argc, char *argv[])
 
     //free everything
     close(sockfd);
-    FreeModules(modulelist);
+    FreeModules(&modulelist);
     FreeSessions(&sessionlist);
     FreeFileCache(&filecache);
 
@@ -409,24 +408,24 @@ void *handle_request(void *arg)
     ((tobServ_thread*)arg)->querry.code = newcode;
     stringcpy(((tobServ_thread*)arg)->querry.module, module, 128);
 
-    pthread_rwlock_rdlock(&((tobServ_thread*)arg)->modulelist.lock);
+    pthread_rwlock_rdlock(&((tobServ_thread*)arg)->modulelist->lock);
 
     if((!strcmp(request.method, "GET") || !strcmp(request.method, "POST")) && (pathclone[0] == '\0' || pathclone[0] == '/'))
     {
-        for(i=0; i<((tobServ_thread*)arg)->modulelist.count; i++)
+        for(i=0; i<((tobServ_thread*)arg)->modulelist->count; i++)
         {
-            if(!strcmp(((tobServ_thread*)arg)->modulelist.modules[i].name, module))
+            if(!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module))
             {
 		//store module path		
-		strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist.modules[i].path);
+		strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist->modules[i].path);
 		    
-                response = ((tobServ_thread*)arg)->modulelist.modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist.modules[i].data);
+                response = ((tobServ_thread*)arg)->modulelist->modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist->modules[i].data);
 
-		pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist.lock);
+		pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
 
                 if(!response.response || !response.type)
                 {
-                    snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist.modules[i].name);
+                    snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
                     write_log("error.txt", logger);
                 }
                 else
@@ -437,13 +436,13 @@ void *handle_request(void *arg)
                 }
             }
         }
-        if(i==((tobServ_thread*)arg)->modulelist.count)
+        if(i==((tobServ_thread*)arg)->modulelist->count)
             send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404);
     }
     else
         send_response(connection, "text/html", "Invalid action", strlen("Invalid action"), ((tobServ_thread*)arg)->querry.code, 0, 400);
 
-    pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist.lock);
+    pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
 
 
 

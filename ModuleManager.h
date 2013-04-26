@@ -1,7 +1,7 @@
 #ifndef _MODULEMANAGER_H_
 #define _MODULEMANAGER_H_
 
-#include "tobServModule.h"
+#include <tobServModule.h>
 
 typedef struct _tobServ_module
 {
