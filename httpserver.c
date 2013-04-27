@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
     if(LoadModules(&modulelist, MODULEFILE)<0)
         printf("ERROR on loading modules, try reload and check your log file");
     else
-	printf("%i modules were successfully loaded", modulelist.count);
+	printf("%i modules were successfully loaded\n", modulelist.count);
 
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
