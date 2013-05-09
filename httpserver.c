@@ -423,6 +423,7 @@ void *handle_request(void *arg)
 
 		pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
 
+
                 if(!response.response || !response.type)
                 {
                     snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
@@ -761,7 +762,7 @@ if((getvarstring = strchr(result.path, '?')))
 
 void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code)
 {
-    char *status, *cache;    
+    char *status, *cache;  
     switch(code)
     {
     case 200:
@@ -783,6 +784,9 @@ void send_response(int connection, char *type, char *content, int size, int sess
     case 404:
 	status = "404 Not Found";
 	break;
+    case 500:
+    status = "500 Internal Server Error";
+    break;
     case 503:
 	status = "503 Service Unavailable";
 	break;
@@ -896,39 +900,34 @@ void *handle_commandline(void *arg)
         add_history(command);
 
         if(!strcmp(command, "help"))
-            printf("available commands:\nhelp - shows this message\nreload - reloads the modules\nexit/shutdown - shuts the server down\n");
+            printf("available commands:\nhelp - shows this message\nstats - show general server statistics\ncache stats - show cache statistics\ncache list - show current content of cache\nreload - reloads the modules\nexit/shutdown - shuts the server down\n");
         else if(!strcmp(command, "shutdown") || !strcmp(command, "exit"))
         {
-            commandline->doshutdown = 1;
             printf("tobServ going to shutdown......");
-            pthread_kill(commandline->mainthreadID, SIGTERM);
             free(command);
+            commandline->doshutdown = 1;
+            pthread_kill(commandline->mainthreadID, SIGTERM);
             return 0;
         }
 
-        else if(!strcmp(command, "reload"))
-        {
-            // TODO: Modulereload  
-            printf("reloading modules\n");
-            //commandline->domodulereload = 1;  
-        }
 
-	//the readings aren't thread safe but who cares. Read operations can't destroy anything
+	    //the readings aren't thread safe but who cares. Read operations can't destroy anything
         else if(!strcmp(command, "stats"))
             printf("tobServ %s Current Status\nThreads: %i/%i PeakThreads: %i TotalRequests: %i\n", VERSION, commandline->numthreads, commandline->maxthreads, commandline->peakthreads, commandline->numrequests);
-	else if(!strcmp(command, "cache stats"))
-	    printf("Cached Files: %i/%i with a total size of %iKB\n", commandline->filecache->numfiles, commandline->filecache->maxfiles, GetTotalFileCacheSize(commandline->filecache)/1024);
+	    else if(!strcmp(command, "cache stats"))
+	        printf("Cached Files: %i/%i with a total size of %iKB\n", commandline->filecache->numfiles, commandline->filecache->maxfiles, GetTotalFileCacheSize(commandline->filecache)/1024);
 
-	else if(!strcmp(command, "cache list"))
-	    commandline_printCacheList(commandline->filecache);
-	else if(!strcmp(command, "reload"))
-	{
-	    FreeModules(commandline->modulelist);
-	    if(LoadModules(commandline->modulelist, MODULEFILE) < 0)
-		printf("Loading modules failed\n");
-	    else
-		printf("%i Modules were successfully loaded\n", commandline->modulelist->count);		
-	}
+	    else if(!strcmp(command, "cache list"))
+	        commandline_printCacheList(commandline->filecache);
+	    else if(!strcmp(command, "reload"))
+	    {
+            printf("tobServ going to reload modules....\n");
+	        FreeModules(commandline->modulelist);
+	        if(LoadModules(commandline->modulelist, MODULEFILE) < 0)
+		    printf("Loading modules failed\n");
+	        else
+		    printf("%i Modules were successfully loaded\n", commandline->modulelist->count);		
+	    }
 
         free(command);
     }
