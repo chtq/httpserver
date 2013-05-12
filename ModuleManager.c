@@ -9,7 +9,7 @@ int LoadModules(tobServ_modulelist *modulelist, char *path)
 {
     int i, a;
     char logger[1024];
-    char *name, *modulepath, *error;
+    char *name, *modulepath, *error, *host;
     tobCONF_File modulefile;
     tobCONF_Section *configsection;
 
@@ -38,14 +38,16 @@ int LoadModules(tobServ_modulelist *modulelist, char *path)
 	{
 	    name = tobCONF_GetElement(configsection, "name");
 	    modulepath = tobCONF_GetElement(configsection, "path");
+        host = tobCONF_GetElement(configsection, "host");
 
-	    if(name && path)
+	    if(name && path && host)
 	    {
 		modulelist->count++;
 		modulelist->modules = realloc(modulelist->modules, sizeof(tobServ_module)*modulelist->count);
 
 		stringcpy(modulelist->modules[modulelist->count-1].name, name, sizeof(modulelist->modules[modulelist->count-1].name));
 		stringcpy(modulelist->modules[modulelist->count-1].path, modulepath, sizeof(modulelist->modules[modulelist->count-1].path));
+        stringcpy(modulelist->modules[modulelist->count-1].host, host, sizeof(modulelist->modules[modulelist->count-1].host));
 	    }
 	    else
 	    {

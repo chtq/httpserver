@@ -313,6 +313,7 @@ void *handle_request(void *arg)
     char *action;
     int length;
     char logger[1024];
+    char buffer[512];
     char *pathclone;
     tobServ_response response;
     int connection;
@@ -361,7 +362,7 @@ void *handle_request(void *arg)
     time_t rawtime;
     time(&rawtime);
     char log[512];
-    snprintf(log, sizeof(log), "%.24s %s %s %s", ctime(&rawtime), ((tobServ_thread*)arg)->querry.IP, request.method, request.path);
+    snprintf(log, sizeof(log), "%.24s %s %s %s %s", ctime(&rawtime), ((tobServ_thread*)arg)->querry.IP, request.method, request.host, request.path);
     write_log("access.log", log);
 
     module = pathclone+1;
@@ -410,38 +411,67 @@ void *handle_request(void *arg)
 
     pthread_rwlock_rdlock(&((tobServ_thread*)arg)->modulelist->lock);
 
+  
     if((!strcmp(request.method, "GET") || !strcmp(request.method, "POST")) && (pathclone[0] == '\0' || pathclone[0] == '/'))
     {
-        for(i=0; i<((tobServ_thread*)arg)->modulelist->count; i++)
+        // force www. redirect if no subdomain given
+        if ((request.host[0] > '9' || request.host[0] < '0') && (strncmp(request.host, "static.", 7) != 0 && strncmp(request.host, "www.", 4) != 0))
         {
-            if(!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module))
+            char *firstocc, *lastocc;
+            firstocc = strchr(request.host, '.');
+            lastocc = strrchr(request.host, '.');
+            if (firstocc == lastocc)  // doesnt work with TLDs like .co.nz
+            {  
+                snprintf(buffer, 512, "http://www.%s%s", request.host, request.path);  
+                send_redirect(connection, buffer, ((tobServ_thread*)arg)->querry.code, 302);
+            }  
+            else
             {
-		//store module path		
-		strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist->modules[i].path);
-		    
-                response = ((tobServ_thread*)arg)->modulelist->modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist->modules[i].data);
-
-		pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
-
-
-                if(!response.response || !response.type)
+                snprintf(buffer, 512, "http://www.%s%s", firstocc+1, request.path); 
+                send_redirect(connection, buffer, ((tobServ_thread*)arg)->querry.code, 404);
+            }
+        }
+        else 
+        {
+            if (!strncmp(request.host, "static.", 7)) snprintf(buffer, 512, "%s", request.host + 7);   
+            if (!strncmp(request.host, "www.", 4)) snprintf(buffer, 512, "%s", request.host + 4); 
+            for(i=0; i<((tobServ_thread*)arg)->modulelist->count; i++)
+            {
+                if(!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].host, buffer) || ((request.host[0] <= '9' && request.host[0] >= '0') && !strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module)))
                 {
-                    snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
-                    write_log("error.txt", logger);
-                }
-                else
-                {
-                    send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache, response.code);
-                    FreeResponse(response);
+                    if (!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].host, buffer))
+                    {
+                        if (strlen(request.path) > 1) action = request.path + 1;
+                        else action = NULL;     
+                    }
+		            //store module path		
+		            strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist->modules[i].path);
+		        
+                    response = ((tobServ_thread*)arg)->modulelist->modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist->modules[i].data);
+
+		            pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
+
+
+                    if(!response.response || !response.type)
+                    {
+                        snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
+                        write_log("error.txt", logger);
+                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), ((tobServ_thread*)arg)->querry.code, 0, 500);
+                    }
+                    else
+                    {
+                        send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache, response.code);
+                        FreeResponse(response);
+                    }
                     break;
                 }
             }
+            if(i==((tobServ_thread*)arg)->modulelist->count)
+                send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404);
         }
-        if(i==((tobServ_thread*)arg)->modulelist->count)
-            send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404);
     }
     else
-        send_response(connection, "text/html", "Invalid action", strlen("Invalid action"), ((tobServ_thread*)arg)->querry.code, 0, 400);
+        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), ((tobServ_thread*)arg)->querry.code, 0, 400);
 
     pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
 
@@ -608,7 +638,11 @@ header get_header(int connection, tobServ_thread *arg)
             if(!strcmp(result.infos[i].name, "Content-Length"))
             {
                 contentlength = atoi(result.infos[i].value);
-                break;
+            }
+            else if(!strcmp(result.infos[i].name, "Host"))
+            {
+                if (strlen(result.infos[i].value) < sizeof(result.host)) stringcpy(result.host, result.infos[i].value, sizeof(result.host));
+                else stringcpy(result.host, "INVALID", sizeof(result.host));
             }
         }
 

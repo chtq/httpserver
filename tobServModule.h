@@ -30,6 +30,7 @@ typedef struct _header
     int success;
     char method[32];
     char path[256];
+    char host[256];
     char version[128];
     unsigned int numinfos;
     tobServ_HeaderInfo *infos;

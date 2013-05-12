@@ -7,6 +7,7 @@ typedef struct _tobServ_module
 {
     char name[128];
     char path[256];
+    char host[256];
     void *handle;
 
     void *data;
