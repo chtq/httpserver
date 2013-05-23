@@ -2,6 +2,7 @@
 #define SESSION_H
 
 #include <pthread.h>
+#include <stdint.h>
 #include "tobServModule.h"
 
 #define SESSION_NAME_SIZE 128
@@ -18,20 +19,25 @@ typedef struct _tobServ_SessionVariable
 typedef struct _tobServ_Session
 {
     char IP[20];
-    int code;
-    int num;
-    int expire;
+    uint32_t code;
+    uint32_t num;
+    uint32_t expire;
     tobServ_SessionVariable *variables;
 } tobServ_Session;
 
 typedef struct _tobServ_SessionList
 {
-    int num;
+    uint32_t num;
     tobServ_Session *sessions;
     pthread_mutex_t *mutex_session;
 } tobServ_SessionList;
 
-int SetSessionVariable(tobServ_Querry *querry, char *name, char *value);
+//0 on success <0 on failure
+int32_t SetSessionVariable(tobServ_Querry *querry, char *name, char *value);
+
 char *GetSessionVariable(tobServ_Querry *querry, char *name);
+
+//0 if not set, 1 if set
+uint32_t IsSessionVariableSet(tobServ_Querry *querry, char *name);
 
 #endif

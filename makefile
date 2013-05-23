@@ -7,22 +7,19 @@ VERSION = 1.0.0
 CC = gcc
 CFLAGS = -g -Wall
 CFLAGSAPI = -g -Wall -shared -Wl,-soname,libtobServAPI.so.$(VERSION)
-LDFLAGS = -lpthread -ldl -lreadline -ltobFUNC -ltobCONF -ltobServAPI
-LDFLAGSAPI = -lpthread -ldl -lreadline -ltobFUNC -ltobCONF
+LDFLAGS = -lpthread -ldl -lreadline -ltobFUNC -ltobCONF -ltobServAPI -ldbg
+LDFLAGSAPI = -lpthread -ldl -lreadline -ltobFUNC -ltobCONF -ldbg
 
 all: httpserver clean
 
-httpserver: httpserver.o ModuleManager.o logger.o
+httpserver: httpserver.o ModuleManager.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
 API: FileCache.o Sessions.o PostVar.o GetVar.o Template.o tobServModule.o
 	$(CC) $(CFLAGSAPI) -o libtobServAPI.so.$(VERSION) $^ $(LDFLAGSAPI)
 
 ModuleManager.o: ModuleManager.c ModuleManager.h
-	$(CC) -fPIC -c $(CFLAGS) $<
-
-logger.o: logger.c logger.h
-	$(CC) -fPIC -c $(CFLAGS) $<
+	$(CC) -c $(CFLAGS) $<
 
 FileCache.o: FileCache.c FileCache.h Template.h
 	$(CC) -fPIC -c $(CFLAGS) $<

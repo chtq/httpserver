@@ -6,6 +6,7 @@
 #include <malloc.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 
 typedef struct _tobServ_PostData
 {
@@ -27,16 +28,16 @@ typedef struct _tobServ_HeaderInfo
 
 typedef struct _header
 {
-    int success;
+    int32_t success;
     char method[32];
     char path[256];
     char host[256];
     char version[128];
-    unsigned int numinfos;
+    uint32_t numinfos;
     tobServ_HeaderInfo *infos;
-    unsigned int numpostdata;
+    uint32_t numpostdata;
     tobServ_PostData *postdata;
-    unsigned int numgetdata;
+    uint32_t numgetdata;
     tobServ_GetData *getdata;
 } header;
 
@@ -44,13 +45,13 @@ struct _tobServ_SessionList;
 
 typedef struct _tobServ_Querry
 {
-    int time;
+    uint64_t time;
     char module[128];
     char modulepath[512];
     char IP[20];
-    int type;
+    uint32_t type;
     struct _tobServ_SessionList *sessionlist;
-    int code;
+    uint32_t code;
     tobServ_FileCache *filecache;
     header *requestheader;
 } tobServ_Querry;
@@ -59,9 +60,9 @@ typedef struct _tobServ_response
 {
     char *response;
     char *type;
-    int code;
-    int usecache;
-    int length;
+    uint32_t code;
+    uint32_t usecache;
+    uint32_t length;
 } tobServ_response;
 
 //action contains the requested path
@@ -72,12 +73,12 @@ typedef tobServ_response (*module_QUERRY_function)(tobServ_Querry querry, char *
 //returns 0 on success
 //-1 on failure. If Init failed it won't be added to the modulelist
 //data can be filled with data
-typedef int (*module_INIT_function)(char *modulename, char *modulepath, void **data);
+typedef int32_t (*module_INIT_function)(char *modulename, char *modulepath, void **data);
 
 //returns 0 on success
 //-1 on failure. Failure will be ignored by the server
 //data is the data pointer from Init
-typedef int (*module_DESTROY_function)(char *modulename, char *modulepath, void *data);
+typedef int32_t (*module_DESTROY_function)(char *modulename, char *modulepath, void *data);
 
 //allocates space for the output, must be freed
 char *tobServ_FormRelativePath(tobServ_Querry *querry, char *path);

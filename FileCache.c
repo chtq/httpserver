@@ -2,33 +2,50 @@
 #include <time.h>
 #include <malloc.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "FileCache.h"
 #include "Template.h"
+#include "dbg.h"
 
-int InitializeFileCache(tobServ_FileCache *filecache, int maxfiles, int maxfilesize)
+int32_t InitializeFile(tobServ_file *file)
+{
+    file->content = NULL;
+    file->type = NULL;
+    file->cacheID = -1;
+    file->parsedFile.type = -1;
+
+    return 0;
+}
+
+int32_t InitializeFileCache(tobServ_FileCache *filecache, uint32_t maxfiles, uint32_t maxfilesize)
 {
     if(maxfilesize<1)
-	return 1;
+	return -1;
     if(maxfiles<1)
-	return 2;
+	return -2;
     
     filecache->numfiles = 0;
     filecache->active = 1;
     filecache->maxfiles = maxfiles;
     filecache->maxfilesize = maxfilesize;
     filecache->files = malloc(sizeof(tobServ_CachedFile)*maxfiles);
+    check_mem(filecache->files);
 
-    pthread_mutex_init(&filecache->freeTookPlaceMutex, NULL);
-    pthread_cond_init(&filecache->freeTookPlaceCond, NULL);
-    pthread_rwlock_init(&filecache->lock, NULL);
+    check(pthread_mutex_init(&filecache->freeTookPlaceMutex, NULL)==0, "pthread_mutex_init failed");
+    check(pthread_cond_init(&filecache->freeTookPlaceCond, NULL)==0, "pthread_cond_init failed");
+    check(pthread_rwlock_init(&filecache->lock, NULL)==0, "pthread_rwlock_init failed");
 
     return 0;
+
+error:
+    FreeFileCache(filecache);
+    return -1;
 }
 
-int FreeFileCache(tobServ_FileCache *filecache)
+int32_t FreeFileCache(tobServ_FileCache *filecache)
 {
-    int i;
+    uint32_t i;
     
     pthread_rwlock_destroy(&filecache->lock);
     pthread_mutex_destroy(&filecache->freeTookPlaceMutex);
@@ -52,11 +69,11 @@ int FreeFileCache(tobServ_FileCache *filecache)
     return 0;
 }
 
-int GetTotalFileCacheSize(tobServ_FileCache* filecache)
+int32_t GetTotalFileCacheSize(tobServ_FileCache* filecache)
 {
-    unsigned int i, sum=0;
+    uint32_t i, sum=0;
     
-    pthread_rwlock_rdlock(&filecache->lock);
+    check(pthread_rwlock_rdlock(&filecache->lock)==0, "pthread_rw_lock_rdlock failed");
 
     for(i=0;i<filecache->numfiles;i++)
 	sum += filecache->files[i].file->size;
@@ -64,31 +81,44 @@ int GetTotalFileCacheSize(tobServ_FileCache* filecache)
     pthread_rwlock_unlock(&filecache->lock);
 
     return sum;
+
+error:
+    return -1;
 }
 
-struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *path, int parse)
+struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *path, uint32_t parse)
 {
-    int i;
+    uint32_t i;
+    uint32_t isCacheLocked=0, isFileLocked=0;
     struct _tobServ_file result;
+
+    InitializeFile(&result);
 
     if(!filecache->active) //if caching is not active right now get it from disk
     {
 	result = LoadFileFromDisk(path);
+	check(result.content, "LoadFileFromDisk with %s failed", path);
+	
 	if(parse)
+	{
 	    result.parsedFile = ParseFile(&result);
+	    check(result.parsedFile.type>0, "ParseFile failed with %s", path);
+	}
 
 	result.cacheID = -1;
 
 	return result;
     }
     
-    pthread_rwlock_rdlock(&filecache->lock);
+    check(pthread_rwlock_rdlock(&filecache->lock)==0, "pthread_rwlock_rdlock failed");
+    isCacheLocked = 1;
 
     for(i=0;i<filecache->numfiles;i++)
     {
 	if(!strcmp(filecache->files[i].path, path))
 	{
-	    pthread_mutex_lock(&filecache->files[i].filelock);
+	    check(pthread_mutex_lock(&filecache->files[i].filelock)==0, "pthread_mutex_lock failed");
+	    isFileLocked = 1;
 
 	    filecache->files[i].usecount++;
 	    filecache->files[i].lastaccess = time(NULL);
@@ -101,50 +131,72 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
 	    }
 
 	    pthread_mutex_unlock(&filecache->files[i].filelock);
+	    isFileLocked=0;
 				 
 	    break;
 	}
     }
 
     pthread_rwlock_unlock(&filecache->lock);
+    isCacheLocked = 0;
 
     if(i==filecache->numfiles) //file not found in cache
     {
 	result = LoadFileFromDisk(path);
-	if(result.content)
-	{
-	    if(parse)
-		result.parsedFile = ParseFile(&result);
+	check(result.content, "LoadFileFromDisk failed for %s", path);
 
-	    result.cacheID = AddFileToCache(filecache, path, result);
+	if(parse)
+	{
+	    result.parsedFile = ParseFile(&result);
+	    check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
 	}
+
+	result.cacheID = AddFileToCache(filecache, path, result);
+	check(result.cacheID>=0, "AddFileToCache failed for %s", path);
     }
     else
 	result = *filecache->files[i].file;
 	
     return result;
+
+error:
+    free_file(filecache, &result);
+
+    //unlocking order is important to prevent altering of the locks themselves
+    if(isFileLocked)
+	pthread_mutex_unlock(&filecache->files[i].filelock);
+    if(isCacheLocked)
+	pthread_rwlock_unlock(&filecache->lock);
+
+    return result;
 }
 
-int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
+int32_t AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 {
-    int highestDeletePriority;
-    int lowestLastUsed=0;
-    int i;
-    int newID = -3;
+    int32_t highestDeletePriority;
+    uint32_t lowestLastUsed=0;
+    uint32_t i;
+    int32_t newID = -3;
+    uint32_t isCacheLocked=0;
     
     //check if too large
-    pthread_rwlock_rdlock(&filecache->lock);
+    check(pthread_rwlock_rdlock(&filecache->lock)==0, "pthread_rwlock_rdlock failed");
+    isCacheLocked = 1;
     
     if(file.size > filecache->maxfilesize)
     {
 	pthread_rwlock_unlock(&filecache->lock);
+	isCacheLocked = 0;
+	
 	return -1;
     }
 
     pthread_rwlock_unlock(&filecache->lock);
+    isCacheLocked = 0;
 
     //check if we have space if not create space
-    pthread_rwlock_wrlock(&filecache->lock);
+    check(pthread_rwlock_wrlock(&filecache->lock)==0, "pthread_rwlock_wrlock failed");
+    isCacheLocked = 1;
 
     if(filecache->numfiles == filecache->maxfiles) //we need space
     {
@@ -172,6 +224,8 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	    filecache->files[newID].file->parsedFile = file.parsedFile;
 
 	    filecache->files[newID].path = realloc(filecache->files[newID].path, strlen(path)+1);
+	    check_mem(filecache->files[newID].path);
+	    
 	    strcpy(filecache->files[newID].path, path);
 	    
 	    filecache->files[newID].lastaccess = time(NULL);
@@ -182,6 +236,7 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	else //cannot cache
 	{
 	    pthread_rwlock_unlock(&filecache->lock);
+	    isCacheLocked = 0;
 	    return -2;
 	}
     }
@@ -190,6 +245,8 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
 	newID = filecache->numfiles;
 
 	filecache->files[newID].file = malloc(sizeof(tobServ_file));
+	check_mem(filecache->files[newID].file);
+	
 	filecache->files[newID].file->content = file.content;
 	filecache->files[newID].file->size = file.size;
 	filecache->files[newID].file->type = file.type;
@@ -208,51 +265,45 @@ int AddFileToCache(tobServ_FileCache* filecache, char *path, tobServ_file file)
     }
     
     pthread_rwlock_unlock(&filecache->lock);
+    isCacheLocked = 0;
+
+    check(newID>=0, "newID=%i is <0 which shouldn't happen", newID); //shouldn't lower than 0
+    
     return newID;
+
+error:
+    if(isCacheLocked)
+	pthread_rwlock_unlock(&filecache->lock);
+
+    return -3;
 }
 
 tobServ_file LoadFileFromDisk(char *path)
 {
     FILE *handle;
-    char *buffer;
-    char *type;
+    char *buffer=NULL;
+    char *type = NULL;
     size_t result;
     tobServ_file file;
-    int size;
+    uint32_t size;
 
-    type = malloc(MAX_FILETYPE_SIZE);
+    InitializeFile(&file);
 
     handle = fopen(path, "rb");
-    if (handle==NULL)
-    {
-        file.content = NULL;
-        file.size = 0;
-        file.type = NULL;
-
-        free(type);
-
-        return file;
-    }
+    check(handle, "fopen failed for %s", path);
 
     fseek(handle, 0, SEEK_END);
     size = ftell(handle);
     rewind (handle);
 
     buffer = malloc(size);
+    check_mem(buffer);
 
     result = fread(buffer, 1, size, handle);
-    if(result != size)
-    {
-        file.content = NULL;
-        file.size = 0;
-        file.type = NULL;
+    check(result==size, "Couldn't read all in fread for file %s", path);
 
-        free(type);
-
-        free(buffer);
-
-        return file;
-    }
+    type = malloc(MAX_FILETYPE_SIZE);
+    check_mem(type);
 
     get_file_type(type, 100, path);
 
@@ -265,36 +316,75 @@ tobServ_file LoadFileFromDisk(char *path)
     file.parsedFile.type = -1;
 
     return file;
+
+error:
+    if(type)
+	free(type);
+    if(buffer)
+	free(buffer);
+
+    return file;
 }
 
-int FreeFileFromFileCache(tobServ_FileCache* filecache, tobServ_file* file)
-{  
+int32_t FreeFileFromFileCache(tobServ_FileCache* filecache, tobServ_file* file)
+{
+    uint32_t isCacheLocked=0;
+    uint32_t isFileLocked=0;
+    uint32_t isFreeTookPlaceLocked=0;
+    
     if(file->cacheID>=0) //it is cached
     {
-	pthread_rwlock_rdlock(&filecache->lock);
+	check(pthread_rwlock_rdlock(&filecache->lock)==0, "pthread_rwlock_rdlock failed");
+	isCacheLocked = 1;
 
-	pthread_mutex_lock(&filecache->files[file->cacheID].filelock);
+	check(pthread_mutex_lock(&filecache->files[file->cacheID].filelock)==0, "pthread_mutex_lock failed");
+	isFileLocked = 1;
+	
 	filecache->files[file->cacheID].usecount--;
-	pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);				 
+	
+	pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);
+	isFileLocked = 0;
 
 	pthread_rwlock_unlock(&filecache->lock);
+	isCacheLocked = 0;
 
-	pthread_mutex_lock(&filecache->freeTookPlaceMutex);
-	filecache->freeTookPlace = 1;
+	//notitfy someone waiting for files to be freed that a file just got freed
+	check(pthread_mutex_lock(&filecache->freeTookPlaceMutex)==0, "pthread_mutex_lock failed");
+	isFreeTookPlaceLocked = 1;
+	
+	filecache->freeTookPlace = 1;	
 	pthread_cond_broadcast(&filecache->freeTookPlaceCond);
+	
 	pthread_mutex_unlock(&filecache->freeTookPlaceMutex);
+	isFreeTookPlaceLocked = 0;
     }
 
     return 0;
+
+error:
+
+    //unlocking order is very important to prevent altering of the locks
+    if(isFreeTookPlaceLocked)
+	pthread_mutex_unlock(&filecache->freeTookPlaceMutex);	
+    if(isFileLocked)
+	pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);
+    if(isCacheLocked)
+	pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);
+
+    return -1;
 }
 
-int AlterAndEmptyFileCache(tobServ_FileCache* filecache, int maxfiles, int maxfilesize)
+int32_t AlterAndEmptyFileCache(tobServ_FileCache* filecache, uint32_t maxfiles, uint32_t maxfilesize)
 {
-    int i;
-    int newmaxfiles;
-    int newmaxfilesize;
+    uint32_t i;
+    uint32_t newmaxfiles;
+    uint32_t newmaxfilesize;
+
+    uint32_t isCacheLocked=0;
+    uint32_t isFreeTookPlaceLocked=0;
     
-    pthread_rwlock_wrlock(&filecache->lock);    
+    check(pthread_rwlock_wrlock(&filecache->lock)==0, "pthread_rwlock_wrlock failed");
+    isCacheLocked = 1;
     filecache->active = 0; //deactivate caching
     
     if(maxfiles<1)
@@ -304,11 +394,13 @@ int AlterAndEmptyFileCache(tobServ_FileCache* filecache, int maxfiles, int maxfi
 	
 	
     pthread_rwlock_unlock(&filecache->lock);
+    isCacheLocked=0;
 
     while(1)
     {
 	//go through all files and check if they are all not used
 	pthread_rwlock_wrlock(&filecache->lock);
+	isCacheLocked=1;
 
 	for(i=0;i<filecache->numfiles;i++)
 	{
@@ -318,57 +410,79 @@ int AlterAndEmptyFileCache(tobServ_FileCache* filecache, int maxfiles, int maxfi
 	if(i==filecache->numfiles)//all not used anymore?
 	{
 	    pthread_rwlock_unlock(&filecache->lock);
+	    isCacheLocked = 0;
 	    break;
 	}
 	
 	pthread_rwlock_unlock(&filecache->lock);
+	isCacheLocked = 0;
 
 	//wait for a file to be freed
 	pthread_mutex_lock(&filecache->freeTookPlaceMutex);
+	isFreeTookPlaceLocked = 1;
+
 	while (!filecache->freeTookPlace) 
 	{
 	    pthread_cond_wait(&filecache->freeTookPlaceCond, &filecache->freeTookPlaceMutex);
 	}
 	filecache->freeTookPlace = 0; //reset
+
 	pthread_mutex_unlock(&filecache->freeTookPlaceMutex);
+	isFreeTookPlaceLocked = 0;
     }
 
-    //reset everything and apply the new options
-    pthread_rwlock_wrlock(&filecache->lock);
-    
+    //reset everything and apply the new options 
     FreeFileCache(filecache);
-    InitializeFileCache(filecache, newmaxfiles, newmaxfilesize);
-    
-    filecache->active = 1; //reactivate caching    
-    pthread_rwlock_unlock(&filecache->lock);
+    InitializeFileCache(filecache, newmaxfiles, newmaxfilesize);//initializeFileCache reactivates caching.
+
+error:
+    if(isFreeTookPlaceLocked)
+	pthread_mutex_unlock(&filecache->freeTookPlaceMutex);
+    if(isCacheLocked)
+	pthread_rwlock_unlock(&filecache->lock);
 
     return 0;
 }
 
-tobServ_file get_file(tobServ_FileCache *filecache, char *path, int parse, int cache)
+tobServ_file get_file(tobServ_FileCache *filecache, char *path, uint32_t parse, uint32_t cache)
 {
     tobServ_file result;
+
+    InitializeFile(&result);
     
     if(!cache)
     {
 	result = LoadFileFromDisk(path);
+	check(result.content, "LoadFileFromDisk failed for %s", path);
+	
 	result.parsedFile.numparts = 0;
 	result.parsedFile.parts = NULL;
 	result.parsedFile.type = 0;
 	result.cacheID = -1;
 
 	if(parse && result.content)
+	{
 	    result.parsedFile = ParseFile(&result);
+	    check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
+	}
 	else
 	    result.parsedFile.type = -1;
     }
     else
+    {
 	result = GetFileFromFileCache(filecache, path, parse);
+	check(result.content, "GetFileFromFileCache failed for %s", path);
+    }
+
+    return result;
+
+error:
+    free_file(filecache, &result);
 
     return result;
 }
 
-int free_file(tobServ_FileCache *cache, tobServ_file *file)
+int32_t free_file(tobServ_FileCache *cache, tobServ_file *file)
 {
     if(file->cacheID>=0)
 	FreeFileFromFileCache(cache, file);
@@ -383,10 +497,13 @@ int free_file(tobServ_FileCache *cache, tobServ_file *file)
 	    FreeParsed(&file->parsedFile);
     }
 
+    //set all to zero
+    InitializeFile(file);
+
     return 0;
 }
 
-int get_file_type(char *type, int size, char *path)
+int32_t get_file_type(char *type, uint32_t size, char *path)
 {
     char *ending=NULL;
 

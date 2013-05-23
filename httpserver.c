@@ -22,7 +22,8 @@
 #include <Template.h>
 #include <Sessions.h>
 
-#include "logger.h"
+#include "dbg.h"
+
 #include "ModuleManager.h"
 
 #define VERSION "0.1"
@@ -32,24 +33,24 @@ typedef struct _tobServ_commandline
 {
     pthread_t mainthreadID;
     pthread_t commandthreadID;
-    int doshutdown;
+    uint32_t doshutdown;
 
     tobServ_modulelist *modulelist;
     tobServ_FileCache *filecache;
 
-    int numthreads;
-    int maxthreads;
-    int numrequests;
-    int peakthreads;
+    uint32_t numthreads;
+    uint32_t maxthreads;
+    uint32_t numrequests;
+    uint32_t peakthreads;
     pthread_mutex_t commandline_mutex;
 } tobServ_commandline;
 
 typedef struct _tobServ_thread
 {
     pthread_t threadID;
-    int created;
-    int connection;
-    int last_active;
+    uint32_t created;
+    uint32_t connection;
+    uint32_t last_active;
     pthread_cond_t *finished;
     pthread_mutex_t *mutex;
     tobServ_modulelist *modulelist;
@@ -57,38 +58,33 @@ typedef struct _tobServ_thread
     tobServ_commandline *commandline;
 } tobServ_thread;
 
-void error(char *msg)
-{
-    perror(msg);
-    exit(1);
-}
-
 void *handle_request(void *arg);
-void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code);
-void send_redirect(int connection, char *content, int sessioncode, int code);
-header get_header(int connection, tobServ_thread*);
-int FreeResponse(tobServ_response);
-int FreeResult(header result);
+void send_response(int32_t connection, char *type, char *content, uint32_t size, uint32_t sessioncode, uint32_t usecache, uint32_t code);
+void send_redirect(int32_t connection, char *content, uint32_t sessioncode, uint32_t code);
+header get_header(int32_t connection, tobServ_thread*);
+int32_t FreeResponse(tobServ_response);
+int32_t FreeResult(header result);
 void *handle_commandline(void *arg);
-void main_shutdown_handler(int);
-int FreeHeader(header);
-int FreeSessions(tobServ_SessionList*);
-int StartSession(tobServ_SessionList*, char*, int);
-int GetSessionCodeFromCookie(char*);
+void main_shutdown_handler(int32_t);
+int32_t FreeHeader(header);
+int32_t FreeSessions(tobServ_SessionList*);
+int32_t StartSession(tobServ_SessionList*, char*, uint32_t);
+int32_t GetSessionCodeFromCookie(char*);
 char *urldecode(char*);
 void commandline_printCacheList(tobServ_FileCache *filecache);
 
 int main(int argc, char *argv[])
 {
-    int sockfd, newsockfd, portno, i;
-    unsigned int clilen;
+    uint32_t portno, i, clilen;
+
+    int32_t sockfd, newsockfd;
 
     char IP[20];
 
     tobServ_thread *threads;
     tobServ_modulelist modulelist;
-    int thread_num;
-    int done;
+    uint32_t thread_num;
+    uint32_t done;
 
     struct sockaddr_in serv_addr, cli_addr;
 
@@ -105,69 +101,37 @@ int main(int argc, char *argv[])
     struct sigaction new_term_action;
 
     tobServ_FileCache filecache;
-    int maxfiles;
-    int maxfilesize;
+    uint32_t maxfiles;
+    uint32_t maxfilesize;
 
     tobCONF_File configfile;
     tobCONF_Section *configsection;
 
+    tobCONF_Initialize(&configfile);
+    ModuleManager_Initialize(&modulelist);
+
     //code
     srand(time(NULL));
 
-    if(tobCONF_ReadFile(&configfile, "server.cfg")<0)
-    {
-	    printf("ERROR on reading ConfigFile: %s", tobCONF_GetLastError(&configfile));
-        tobCONF_Free(&configfile);
-        return 0;
-    }
+    check(tobCONF_ReadFile(&configfile, "server.cfg")==0, "on reading ConfigFile: %s", tobCONF_GetLastError(&configfile));
 
     configsection = tobCONF_GetSection(&configfile, "server");
-    if(!configsection)
-    {
-	    printf("ERROR config section \"server\" doesn't exist");
-	    tobCONF_Free(&configfile);
-	    return 0;
-    }
+    check(configsection, "config section \"server\" doesn't exist");
 
     thread_num = atoi(tobCONF_GetElement(configsection, "maxthreads"));
-    if(thread_num<1)
-    {
-	    printf("ERROR invalid value for maxthreads");
-	    tobCONF_Free(&configfile);
-	    return 0;	
-    }
+    check(thread_num>1, "invalid value for maxthreads");
 
     portno = atoi(tobCONF_GetElement(configsection, "port"));
-    if(portno<1 || portno>65536)
-    {
-	    printf("ERROR invalid value for port");
-	    tobCONF_Free(&configfile);
-	    return 0;	
-    }
+    check((portno>=1 && portno<=65536), "invalid value for port: %i", portno);
 
     configsection = tobCONF_GetSection(&configfile, "Cache");
-    if(!configsection)
-    {
-	    printf("ERROR config section \"Cache\" doesn't exist");
-	    tobCONF_Free(&configfile);
-	    return 0;
-    }
+    check(configsection, "config section \"Cache\" doesn't exist");
 
     maxfiles = atoi(tobCONF_GetElement(configsection, "maxfiles"));
-    if(maxfiles<1)
-    {
-	    printf("ERROR invalid value for maxfiles");
-	    tobCONF_Free(&configfile);
-	    return 0;	
-    }
+    check(maxfiles>=1, "invalid value for maxfiles: %i", maxfiles);
 
     maxfilesize = atoi(tobCONF_GetElement(configsection, "maxfilesize"));
-    if(maxfilesize<1)
-    {
-	    printf("ERROR invalid value for maxfilesize");
-	    tobCONF_Free(&configfile);
-	    return 0;	
-    }
+    check(maxfilesize, "invalid value for maxfilesize: %i", maxfilesize);
 
     tobCONF_Free(&configfile);
     //done parsing the config
@@ -179,32 +143,33 @@ int main(int argc, char *argv[])
 
     sessionlist.num = 0;
     sessionlist.sessions = NULL;
+
     pthread_mutex_init(&mutex_session, NULL);
+
     sessionlist.mutex_session = &mutex_session;
 
     pthread_cond_init(&thread_finished, NULL);
     pthread_mutex_init(&mutex_finished, NULL);
 
     threads = malloc(sizeof(tobServ_thread)*thread_num);
+    check_mem(threads);
     bzero((char *)threads, sizeof(tobServ_thread)*thread_num);
 
     //LOADING MODULES
-    if(LoadModules(&modulelist, MODULEFILE)<0)
-        printf("ERROR on loading modules, try reload and check your log file");
-    else
-	printf("%i modules were successfully loaded\n", modulelist.count);
-
+    //don't shutdown on failure
+    if(ModuleManager_LoadModules(&modulelist, MODULEFILE)<0)
+        log_info("Couldn't load modules, check your module file and try reload!");
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0)
-        error("ERROR opening socket");
+    check(sockfd>=0, "Opening socket failed!");
+
     bzero((char *) &serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(portno);
-    if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-        error("ERROR on binding");
-    listen(sockfd,5);
+    check(bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) >= 0, "Binding socket on port %i failed! Check if it isn't occupied already", portno);
+
+    check(listen(sockfd,5)==0, "listen on port %i failed", portno);
     clilen = sizeof(cli_addr);
 
     pthread_attr_init(&attr);
@@ -221,63 +186,56 @@ int main(int argc, char *argv[])
     pthread_mutex_init(&commandline.commandline_mutex, NULL);
 
     //FileCache
-    InitializeFileCache(&filecache, maxfiles, maxfilesize);
+    check(InitializeFileCache(&filecache, maxfiles, maxfilesize)==0, "InitializeFileCache failed");
     commandline.filecache = &filecache;
 
     //create command handler
-    pthread_create(&commandline.commandthreadID, &attr, handle_commandline, (void*)&commandline);
+    check(pthread_create(&commandline.commandthreadID, &attr, handle_commandline, (void*)&commandline)==0, "pthread_create failed");
 
-    write_log("log.txt", "Server was successfully started");
+    log_info("Server was successfully started");
 
     while (!commandline.doshutdown)
     {       
         errno = 0;
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-        if (newsockfd < 0)
-        {
-            if(errno == EINTR)
-                continue;
-            else
-                error("ERROR on accept");
-        }
-        else
-        {
-            inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
+	check(newsockfd>=0, "accept failed");	
 
-            for(i=0; i<thread_num; i++)
-            {
-                if(threads[i].threadID==0)
-                {
-                    threads[i].connection = newsockfd;
-                    threads[i].created = time(NULL);
-                    threads[i].last_active = time(NULL);
-                    threads[i].finished = &thread_finished;
-                    threads[i].mutex = &mutex_finished;
-                    threads[i].modulelist = &modulelist;
-                    stringcpy(threads[i].querry.IP, IP, 20);
-                    threads[i].querry.time = time(NULL);
-                    threads[i].commandline = &commandline;
-                    threads[i].querry.sessionlist = &sessionlist;
-		    threads[i].querry.filecache = &filecache;
+	inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
+
+	for(i=0; i<thread_num; i++)
+	{
+	    if(threads[i].threadID==0)
+	    {
+		threads[i].connection = newsockfd;
+		threads[i].created = time(NULL);
+		threads[i].last_active = time(NULL);
+		threads[i].finished = &thread_finished;
+		threads[i].mutex = &mutex_finished;
+		threads[i].modulelist = &modulelist;
+		stringcpy(threads[i].querry.IP, IP, 20);
+		threads[i].querry.time = time(NULL);
+		threads[i].commandline = &commandline;
+		threads[i].querry.sessionlist = &sessionlist;
+		threads[i].querry.filecache = &filecache;
                     
-                    pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i]);
+		check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
 
-                    break;
-                }
-            }
-            if(i==thread_num) //no open slots close the connection
-            {
-                                
-                close(newsockfd);
-            }
-        }   
+		break;
+	    }
+	}
+	if(i==thread_num) //no open slots close the connection
+	{
+	    log_warn("Request was dropped because maxthreads was reached");
+	    close(newsockfd);
+	}
+  
     }
 
     done = 0;
     while(!done)
     {
         sleep(1);
-        pthread_mutex_lock(&commandline.commandline_mutex);
+        check(pthread_mutex_lock(&commandline.commandline_mutex)==0, "pthread_mutex_lock failed");
         if(commandline.numthreads == 0)
             done = 1;
         pthread_mutex_unlock(&commandline.commandline_mutex);
@@ -289,7 +247,7 @@ int main(int argc, char *argv[])
 
     //free everything
     close(sockfd);
-    FreeModules(&modulelist);
+    ModuleManager_FreeModules(&modulelist);
     FreeSessions(&sessionlist);
     FreeFileCache(&filecache);
 
@@ -299,6 +257,11 @@ int main(int argc, char *argv[])
     printf("DONE\n");
 
     return 0;
+
+error:
+    tobCONF_Free(&configfile);
+
+    return 1;
 }
 
 void main_shutdown_handler(int signum)
@@ -309,19 +272,19 @@ void main_shutdown_handler(int signum)
 void *handle_request(void *arg)
 {
     header request;
-    char *module;
-    char *action;
+    char *module = NULL;
+    char *action = NULL;
     int length;
     char logger[1024];
     char buffer[512];
-    char *pathclone;
+    char *pathclone = NULL;
     tobServ_response response;
     int connection;
     int i, state, code, newcode;
 
 
     //update num threads and peak threads
-    pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
+    check(pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex)==0, "pthread_mutex_lock failed");
 
     ((tobServ_thread*)arg)->commandline->numthreads++;
     ((tobServ_thread*)arg)->commandline->numrequests++;
@@ -340,13 +303,13 @@ void *handle_request(void *arg)
         close(connection);
 
         //change commandline thread count
-        pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
+        check(pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex)==0, "pthread_mutex_lock failed");
         ((tobServ_thread*)arg)->commandline->numthreads--;
         pthread_mutex_unlock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
 
 
         //mark thread as finished
-        pthread_mutex_lock(((tobServ_thread*)arg)->mutex);
+        check(pthread_mutex_lock(((tobServ_thread*)arg)->mutex)==0, "pthread_mutex_lock failed");
         pthread_cond_signal(((tobServ_thread*)arg)->finished);
         ((tobServ_thread*)arg)->threadID = 0;
         pthread_mutex_unlock(((tobServ_thread*)arg)->mutex);
@@ -356,15 +319,21 @@ void *handle_request(void *arg)
     ((tobServ_thread*)arg)->querry.requestheader = &request;  
 
     pathclone = malloc(strlen(request.path)+1);
+    check_mem(pathclone);
+
     stringcpy(pathclone, request.path, strlen(request.path)+1);
 
-    // access logger
+    //access logger currently deactivated for write_log beeing disabled
+    /* access logger
     time_t rawtime;
     time(&rawtime);
     char log[512];
     snprintf(log, sizeof(log), "%.24s %s %s %s %s", ctime(&rawtime), ((tobServ_thread*)arg)->querry.IP, request.method, request.host, request.path);
     write_log("access.log", log);
+    */
 
+
+    //separate module and action
     module = pathclone+1;
     action = NULL;
 
@@ -394,12 +363,8 @@ void *handle_request(void *arg)
 
     code = -1;
     for(i=0; i<request.numinfos; i++)
-    {
         if(!strcmp(request.infos[i].name, "Cookie"))
-        {
             code = GetSessionCodeFromCookie(request.infos[i].value);
-        }
-    }
 
     newcode = StartSession(((tobServ_thread*)arg)->querry.sessionlist, ((tobServ_thread*)arg)->querry.IP, code);
 
@@ -455,7 +420,6 @@ void *handle_request(void *arg)
                     if(!response.response || !response.type)
                     {
                         snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
-                        write_log("error.txt", logger);
                         send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), ((tobServ_thread*)arg)->querry.code, 0, 500);
                     }
                     else
@@ -499,6 +463,10 @@ void *handle_request(void *arg)
     ((tobServ_thread*)arg)->threadID = 0;
 
     pthread_mutex_unlock(((tobServ_thread*)arg)->mutex);
+
+    return 0;
+
+error:
 
     return 0;
 }
@@ -663,8 +631,7 @@ header get_header(int connection, tobServ_thread *arg)
             {
                 n = read(connection,buffer,255);
                 buffer[n] = '\0';
-                if (n < 0)
-                    error("ERROR reading from socket");
+		check(n>=0, "ERROR reading from socket");
 
                 if((contentwritten+n)>contentlength)
                 {
@@ -744,15 +711,15 @@ header get_header(int connection, tobServ_thread *arg)
     }
 
 //parse get variables
-result.getdata = NULL;
-result.numgetdata = 0;
+    result.getdata = NULL;
+    result.numgetdata = 0;
 
-if((getvarstring = strchr(result.path, '?')))
-{
-    getvarstring++;//skip the "?"
+    if((getvarstring = strchr(result.path, '?')))
+    {
+	getvarstring++;//skip the "?"
 	
-    num = result.numgetdata = explode(&lines, getvarstring, "&");
-    if(result.numgetdata)
+	num = result.numgetdata = explode(&lines, getvarstring, "&");
+	if(result.numgetdata)
 	    result.getdata = malloc(sizeof(tobServ_GetData)*result.numgetdata);
 
 	a=0;
@@ -792,9 +759,12 @@ if((getvarstring = strchr(result.path, '?')))
     content = NULL;
 
     return result;
+
+error:
+    return result;
 }
 
-void send_response(int connection, char *type, char *content, int size, int sessioncode, int usecache, int code)
+void send_response(int32_t connection, char *type, char *content, uint32_t size, uint32_t sessioncode, uint32_t usecache, uint32_t code)
 {
     char *status, *cache;  
     switch(code)
@@ -860,7 +830,7 @@ void send_response(int connection, char *type, char *content, int size, int sess
         totalsent += sent;
     }
 }
-void send_redirect(int connection, char *content, int sessioncode, int code) // redirect-location will be transmitted via content
+void send_redirect(int32_t connection, char *content, uint32_t sessioncode, uint32_t code) // redirect-location will be transmitted via content
 {
     char *status;
     char headerstring[256];
@@ -956,8 +926,8 @@ void *handle_commandline(void *arg)
 	    else if(!strcmp(command, "reload"))
 	    {
             printf("tobServ going to reload modules....\n");
-	        FreeModules(commandline->modulelist);
-	        if(LoadModules(commandline->modulelist, MODULEFILE) < 0)
+	        ModuleManager_FreeModules(commandline->modulelist);
+	        if(ModuleManager_LoadModules(commandline->modulelist, MODULEFILE) < 0)
 		    printf("Loading modules failed\n");
 	        else
 		    printf("%i Modules were successfully loaded\n", commandline->modulelist->count);		
@@ -1009,7 +979,7 @@ int FreeSessions(tobServ_SessionList *sessionlist)
     return 0;
 }
 
-int StartSession(tobServ_SessionList *sessionlist, char *IP, int code) //-1 already exists else new code returned
+int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint32_t code) //-1 already exists else new code returned
 {
     int i, a, newcode;
 
