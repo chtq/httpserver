@@ -71,13 +71,13 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
         modulelist->modules[i].handle = dlopen(modulelist->modules[i].path, RTLD_LAZY);
 
 	errorstring = dlerror();
-	check(errorstring, "failed on loading module: %s, REASON: %s", modulelist->modules[i].name, errorstring);
+	check(!errorstring, "failed on loading module: %s, REASON: %s", modulelist->modules[i].name, errorstring);
 
         modulelist->modules[i].querry_function = dlsym(modulelist->modules[i].handle, "tobModule_QuerryFunction");
-	check(dlerror(), "failed on loading tobModule_QuerryFunction from %s", modulelist->modules[i].name);
+	check(!dlerror(), "failed on loading tobModule_QuerryFunction from %s", modulelist->modules[i].name);
 
 	modulelist->modules[i].destroy_function = dlsym(modulelist->modules[i].handle, "tobModule_DestroyFunction");
-	check(dlerror(), "failed on loading tobModule_DestroyFunction from %s", modulelist->modules[i].name);
+	check(!dlerror(), "failed on loading tobModule_DestroyFunction from %s", modulelist->modules[i].name);
 
 	//remove the filename from path ex modules/test/test.so to modules/test/ to have a useable relativ path	
 	for(a=strlen(modulelist->modules[i].path) ; a>=0 ; a--)
