@@ -198,36 +198,36 @@ int main(int argc, char *argv[])
     {       
         errno = 0;
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-	check(newsockfd>=0, "accept failed");	
+	    check(newsockfd>=0, "accept failed");	
 
-	inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
+	    inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
 
-	for(i=0; i<thread_num; i++)
-	{
-	    if(threads[i].threadID==0)
+	    for(i=0; i<thread_num; i++)
 	    {
-		threads[i].connection = newsockfd;
-		threads[i].created = time(NULL);
-		threads[i].last_active = time(NULL);
-		threads[i].finished = &thread_finished;
-		threads[i].mutex = &mutex_finished;
-		threads[i].modulelist = &modulelist;
-		stringcpy(threads[i].querry.IP, IP, 20);
-		threads[i].querry.time = time(NULL);
-		threads[i].commandline = &commandline;
-		threads[i].querry.sessionlist = &sessionlist;
-		threads[i].querry.filecache = &filecache;
-                    
-		check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
+	        if(threads[i].threadID==0)
+	        {
+		    threads[i].connection = newsockfd;
+		    threads[i].created = time(NULL);
+		    threads[i].last_active = time(NULL);
+		    threads[i].finished = &thread_finished;
+		    threads[i].mutex = &mutex_finished;
+		    threads[i].modulelist = &modulelist;
+		    stringcpy(threads[i].querry.IP, IP, 20);
+		    threads[i].querry.time = time(NULL);
+		    threads[i].commandline = &commandline;
+		    threads[i].querry.sessionlist = &sessionlist;
+		    threads[i].querry.filecache = &filecache;
+                        
+		    check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
 
-		break;
+		    break;
+	        }
 	    }
-	}
-	if(i==thread_num) //no open slots close the connection
-	{
-	    log_warn("Request was dropped because maxthreads was reached");
-	    close(newsockfd);
-	}
+	    if(i==thread_num) //no open slots close the connection
+	    {
+	        log_warn("Request was dropped because maxthreads was reached");
+	        close(newsockfd);
+	    }
   
     }
 
@@ -259,7 +259,14 @@ int main(int argc, char *argv[])
     return 0;
 
 error:
+    // almost inevitable memleak at crash - should we care?
     tobCONF_Free(&configfile);
+    FreeSessions(&sessionlist);
+    FreeFileCache(&filecache);
+    //ModuleManager_FreeModules(&modulelist);  
+    //causes infinite loop
+
+    if (threads) free(threads);
 
     return 1;
 }
@@ -507,7 +514,7 @@ header get_header(int connection, tobServ_thread *arg)
         }
         buffer[n] = '\0';
 
-        if((length+n+1)>size)
+        if((length+n+1)>=size)
         {
             size += 512;
 

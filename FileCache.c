@@ -142,20 +142,23 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
 
     if(i==filecache->numfiles) //file not found in cache
     {
-	result = LoadFileFromDisk(path);
-	check(result.content, "LoadFileFromDisk failed for %s", path);
+	    result = LoadFileFromDisk(path);
+	    check(result.content, "LoadFileFromDisk failed for %s", path);
 
-	if(parse)
-	{
-	    result.parsedFile = ParseFile(&result);
-	    check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
-	}
+	    if(parse)
+	    {
+	        result.parsedFile = ParseFile(&result);
+	        check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
+	    }
 
-	result.cacheID = AddFileToCache(filecache, path, result);
-	check(result.cacheID>=0, "AddFileToCache failed for %s", path);
+	    result.cacheID = AddFileToCache(filecache, path, result);
+        if (result.cacheID <0) 
+        {
+            log_warn("AddFileToCache returned %d for %s", result.cacheID, path);
+            return result;
+        }
     }
-    else
-	result = *filecache->files[i].file;
+    else result = *filecache->files[i].file;
 	
     return result;
 

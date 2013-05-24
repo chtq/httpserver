@@ -66,7 +66,7 @@ int32_t AddTemplateVariable(tobServ_template *templatehandle, char *name, char *
     check_mem(templatehandle->variables);
 
     check(tobString_Init(&templatehandle->variables[templatehandle->numvariables].name, MAX_VARIABLE_LENGTH)==0, "tobString_Init failed");
-    check(tobString_Add(&templatehandle->variables[templatehandle->numvariables].name, name, strlen(name)), "tobString_Add failed");
+    check(tobString_Add(&templatehandle->variables[templatehandle->numvariables].name, name, strlen(name))==0, "tobString_Add failed");
 
     check(tobString_Init(&templatehandle->variables[templatehandle->numvariables].replace, MAX_VARIABLE_LENGTH)==0, "tobString_Init failed");
     check(tobString_Add(&templatehandle->variables[templatehandle->numvariables].replace, replace, strlen(replace))==0, "tobString_Add failed");
@@ -76,6 +76,7 @@ int32_t AddTemplateVariable(tobServ_template *templatehandle, char *name, char *
     return 0;
 
 error:
+   
     tobString_Free(&templatehandle->variables[templatehandle->numvariables].name);
     tobString_Free(&templatehandle->variables[templatehandle->numvariables].replace);
 
@@ -155,6 +156,8 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
 
     result.numparts = 0;
     result.parts = NULL;
+    result.type = 0; 
+
 
     tobString_Init(&switchSET, 512);
     tobString_Init(&switchUNSET, 512);
