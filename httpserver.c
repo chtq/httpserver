@@ -59,8 +59,8 @@ typedef struct _tobServ_thread
 } tobServ_thread;
 
 void *handle_request(void *arg);
-void send_response(int32_t connection, char *type, char *content, uint32_t size, uint32_t sessioncode, uint32_t usecache, uint32_t code);
-void send_redirect(int32_t connection, char *content, uint32_t sessioncode, uint32_t code);
+void send_response(int32_t connection, char *type, char *content, uint32_t size, uint32_t sessioncode, uint32_t usecache, uint32_t code, uint32_t nocookies);
+void send_redirect(int32_t connection, char *content, uint32_t code);
 header get_header(int32_t connection, tobServ_thread*);
 int32_t FreeResponse(tobServ_response);
 int32_t FreeResult(header result);
@@ -283,7 +283,7 @@ void *handle_request(void *arg)
     char *action = NULL;
     int length;
     char logger[1024];
-    char buffer[512];
+    char buffer[512] = {'\0'};
     char *pathclone = NULL;
     tobServ_response response;
     int connection;
@@ -395,18 +395,19 @@ void *handle_request(void *arg)
             if (firstocc == lastocc)  // doesnt work with TLDs like .co.nz
             {  
                 snprintf(buffer, 512, "http://www.%s%s", request.host, request.path);  
-                send_redirect(connection, buffer, ((tobServ_thread*)arg)->querry.code, 302);
+                send_redirect(connection, buffer, 301);
             }  
             else
             {
                 snprintf(buffer, 512, "http://www.%s%s", firstocc+1, request.path); 
-                send_redirect(connection, buffer, ((tobServ_thread*)arg)->querry.code, 404);
+                send_redirect(connection, buffer, 302);
             }
         }
         else 
         {
-            if (!strncmp(request.host, "static.", 7)) snprintf(buffer, 512, "%s", request.host + 7);   
-            if (!strncmp(request.host, "www.", 4)) snprintf(buffer, 512, "%s", request.host + 4); 
+            if (!strncmp(request.host, "static.", 7)) snprintf(buffer, 512, "%s", request.host + 7);  
+            else if (!strncmp(request.host, "www.", 4)) snprintf(buffer, 512, "%s", request.host + 4); 
+
             for(i=0; i<((tobServ_thread*)arg)->modulelist->count; i++)
             {
                 if(!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].host, buffer) || ((request.host[0] <= '9' && request.host[0] >= '0') && !strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module)))
@@ -427,22 +428,22 @@ void *handle_request(void *arg)
                     if(!response.response || !response.type)
                     {
                         snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
-                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), ((tobServ_thread*)arg)->querry.code, 0, 500);
+                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), ((tobServ_thread*)arg)->querry.code, 0, 500, response.nocookies);
                     }
                     else
                     {
-                        send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache, response.code);
+                        send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache, response.code, response.nocookies);
                         FreeResponse(response);
                     }
                     break;
                 }
             }
             if(i==((tobServ_thread*)arg)->modulelist->count)
-                send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404);
+                send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404, 1);
         }
     }
     else
-        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), ((tobServ_thread*)arg)->querry.code, 0, 400);
+        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), ((tobServ_thread*)arg)->querry.code, 0, 400, 1);
 
     pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
 
@@ -771,7 +772,7 @@ error:
     return result;
 }
 
-void send_response(int32_t connection, char *type, char *content, uint32_t size, uint32_t sessioncode, uint32_t usecache, uint32_t code)
+void send_response(int32_t connection, char *type, char *content, uint32_t size, uint32_t sessioncode, uint32_t usecache, uint32_t code, uint32_t nocookies)
 {
     char *status, *cache;  
     switch(code)
@@ -781,7 +782,7 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
 	break;
     case 301:
     case 302:
-	send_redirect(connection, content, sessioncode, code);
+	send_redirect(connection, content, code);
 	return;
     case 400:
 	status = "400 Bad Request";
@@ -816,7 +817,11 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
     else
 	cache = "";
 
-    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);    
+    if (!nocookies)
+        snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);   
+
+    else
+        snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, cache, size, type); 
 
     write(connection,headerstring,strlen(headerstring));
 
@@ -837,17 +842,31 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
         totalsent += sent;
     }
 }
-void send_redirect(int32_t connection, char *content, uint32_t sessioncode, uint32_t code) // redirect-location will be transmitted via content
+void send_redirect(int32_t connection, char *content, uint32_t code) // redirect-location will be transmitted via content
 {
     char *status;
     char headerstring[256];
-    if (code == 301)
-        status = "301 Moved Permanently";
-    else
-        status = "302 Found";
 
-    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nLocation:%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\nConnection: close\r\n\r\n", status, VERSION, content, sessioncode);
+    switch(code)
+    {
+        case 301:   
+            status = "301 Moved Permanently";
+            break;
+    
+        case 302:   
+            status = "302 Found";
+            break;
+
+        default:
+            sentinel("Invalid Code for Redirect");
+
+    }
+
+    snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nLocation:%s\r\nConnection: close\r\n\r\n", status, VERSION, content);
     write(connection,headerstring,strlen(headerstring));
+    return;
+
+error:
     return;
 }
 

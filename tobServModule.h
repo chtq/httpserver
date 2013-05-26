@@ -63,6 +63,7 @@ typedef struct _tobServ_response
     uint32_t code;
     uint32_t usecache;
     uint32_t length;
+    uint32_t nocookies;
 } tobServ_response;
 
 //action contains the requested path
