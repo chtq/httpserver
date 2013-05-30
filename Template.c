@@ -145,7 +145,7 @@ error:
 
 tobServ_parsedFile ParseFileSubString(char *string, int size)
 {
-    uint32_t i, a;
+    uint32_t i, a, fallback;
     tobServ_parsedFile result;
     char name[MAX_VARIABLE_LENGTH];
     char buffer[MAX_VARIABLE_LENGTH+10];
@@ -167,265 +167,287 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
     
     for(i=0;i<size;i++)
     {
-	if(string[i] == '%') //VARIABLE POSSIBLY FOUND
-	{
-	    i++; //go to the next char
-	    a=0; //initialize variablename character counter
-	    
-	    for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+        fallback = 0;
+	    if(string[i] == '%') //VARIABLE POSSIBLY FOUND
 	    {
-		if(string[i] == '%') //end found
-		{		    
-		    name[a] = '\0';
-		    
-		    if(a>0)//it's only a variable if the variablename length is greater than zero
-		    {
-			//check if text must be added
-			if(text.len>0)
-			{
-			    result.numparts++;
-			    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-			    check_mem(result.parts);
+	        i++; //go to the next char
+	        a=0; //initialize variablename character counter
+	        
+	        for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	        {
+		        if(string[i] == '%') //end found
+		        {		    
+		            name[a] = '\0';
+		            
+		            if(a>0)//it's only a variable if the variablename length is greater than zero
+		            {
+			            //check if text must be added
+			            if(text.len>0)
+			            {
+			                result.numparts++;
+			                result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+			                check_mem(result.parts);
 
-			    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
-			    result.parts[result.numparts-1].numparts = 0;
-			    result.parts[result.numparts-1].parts = NULL;
+			                result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+			                result.parts[result.numparts-1].numparts = 0;
+			                result.parts[result.numparts-1].parts = NULL;
 
-			    result.parts[result.numparts-1].name = text;
+			                result.parts[result.numparts-1].name = text;
 
-			    tobString_Init(&text, 512);//create a new text buffer
-			}
+			                tobString_Init(&text, 512);//create a new text buffer
+			            }
 			
-			result.numparts++;
-			result.parts = realloc(result.parts, result.numparts*sizeof(tobServ_parsedFile));
-			check_mem(result.parts);
+			            result.numparts++;
+			            result.parts = realloc(result.parts, result.numparts*sizeof(tobServ_parsedFile));
+			            check_mem(result.parts);
 
-			result.parts[result.numparts-1].type = PARSEDFILE_VARIABLE;
-			result.parts[result.numparts-1].numparts = 0;
-			result.parts[result.numparts-1].parts = NULL;
+			            result.parts[result.numparts-1].type = PARSEDFILE_VARIABLE;
+			            result.parts[result.numparts-1].numparts = 0;
+			            result.parts[result.numparts-1].parts = NULL;
 			
-			tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
-			check(tobString_Copy(&result.parts[result.numparts-1].name, name, a)==0, "tobString_Copy failed");
-		    }
-		    else
-			check(tobString_AddChar(&text, '%')==0, "tobString_AddChar failed"); //%% means escaped %
+			            tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
+			            check(tobString_Copy(&result.parts[result.numparts-1].name, name, a)==0, "tobString_Copy failed");
+		            }
+		            else
+			            check(tobString_AddChar(&text, '%')==0, "tobString_AddChar failed"); //%% means escaped %
 
-		    break; //we are done
-		}
-		else
-		{
-		    //save char and go to the next one
-		    name[a] = string[i];
-		    a++;
-		}
+		            break; //we are done
+		        }
+		        else
+		        {
+		            //save char and go to the next one
+		            name[a] = string[i];
+                    if (string[i] == ' ' || string[i] == '\n') // variable names have to be a single word in a single line
+                    {
+                        check(tobString_AddChar(&text, '%')==0, "tobString_AddChar failed");
+                        fallback = 1;
+                        break;
+                    }
+		            a++;
+		        }
+	        }
+
+	        if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding the second %
+	        {
+                check(tobString_AddChar(&text, '%')==0, "tobString_AddChar failed");
+		        fallback = 1;
+	        }
 	    }
-
-	    if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding the second %
+	    else if(string[i] == '[' && string[i+1] != '/') //SECTION POSSIBLY FOUND [/ is reserved for section endings
 	    {
-		//add everything but don't replace anything
-		check(tobString_AddChar(&text, '%')==0, "tobString_AddChar failed");
-		check(tobString_Add(&text, name, a)==0, "tobString_Add failed");
+	        i++; //go to the next char
+	        a=0; //reset name index
+	        
+	        for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	        {
+		        if(string[i] == ']') //end found
+		        {
+		            name[a] = '\0';
+
+		            i++;
+		            
+		            if(a>0) //it's only a section if the sectionname length is greater than zero
+		            {
+			            snprintf(buffer, sizeof(buffer), "[/%s]", name);
+				
+			            //search for the ending
+			            for(;i< ( size - a - 3) ;i++) // there still has to be enough space for the test
+			            {				    
+			                if(!strncmp(string+i, buffer, a+3)) //a+3 is the length of [/SECTIONNAME]
+			                {
+				                //check if text must be added
+				                if(text.len>0)
+				                {
+				                    result.numparts++;
+				                    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+				                    check_mem(result.parts);
+
+				                    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+				                    result.parts[result.numparts-1].numparts = 0;
+				                    result.parts[result.numparts-1].parts = NULL;
+
+				                    result.parts[result.numparts-1].name = text;
+
+				                    tobString_Init(&text, 512);
+				                }
+				
+				                result.numparts++;
+				                result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+				                check_mem(result.parts);
+
+				                tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
+
+				                result.parts[result.numparts-1] = ParseFileSubString(sectioncontent.str, sectioncontent.len);
+				                check(result.parts[result.numparts-1].type >= 0, "ParseFileSubString failed");
+
+				                result.parts[result.numparts-1].type = PARSEDFILE_SECTION;
+
+				                check(tobString_Copy(&result.parts[result.numparts-1].name, name, a)==0, "tobString_Copy failed");				
+
+				                i += a + 3; //put the index behind the section
+				                break;
+			                }
+			                else
+				            check(tobString_AddChar(&sectioncontent, string[i])==0, "tobString_AddChar failed");
+			            }
+
+			            if(i == size - a - 3) //ending wasn't found till the very end
+			                check(tobString_sprintf(&text, "[%s]%s", name, sectioncontent.str)==0, "tobString_sprintf failed");
+
+			            tobString_Free(&sectioncontent);
+		            }
+		            else
+			            check(tobString_Add(&text, "[]", strlen("[]"))==0, "tobString_Add failed"); //no replacement needed because it isn't a valid sectionname
+
+		            break; //we are done
+		        }
+
+		        name[a] = string[i];
+		        a++;
+	        }
+            if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding ]
+	        {
+                check(tobString_AddChar(&text, '[')==0, "tobString_AddChar failed");
+		        fallback = 1;
+	        }
 	    }
-	}
-	else if(string[i] == '[' && string[i+1] != '/') //SECTION POSSIBLY FOUND [/ is reserved for section endings
-	{
-	    i++; //go to the next char
-	    a=0; //reset name index
-	    
-	    for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	    else if(string[i] == '{') //SWITCH possibly found
 	    {
-		if(string[i] == ']') //end found
-		{
-		    name[a] = '\0';
+	        i++; //go to the next char
+	        a=0; //reset name index
+	        
+	        for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
+	        {
+		        if(string[i] == '{') //end found
+		        {
+		            i++;
+		            if(string[i] != '{') // { must follow right after
+		            {
+			            check(tobString_sprintf(&text, "{%s}", name)==0, "tobString_sprintf failed"); //no switch found add everything
+		            }
+		            else
+		            {
+			            i++; //next char
 
-		    i++;
-		    
-		    if(a>0) //it's only a section if the sectionname length is greater than zero
-		    {
-			snprintf(buffer, sizeof(buffer), "[/%s]", name);
+			            //get the onset part of the switch
+			            for(;i<size;i++)
+			            {
+			                if(string[i] == '}')
+				            break;
+
+			                check(tobString_AddChar(&switchSET, string[i])==0, "tobString_AddChar failed");
+			            }
+			            if(i==size) //couldn't find '}'
+			            {
+			                check(tobString_sprintf(&text, "{%s}{%s", name, switchSET.str)==0, "tobString_sprintf failed");
+			            }
+			            else
+			            {
+			                //it was found now search for the unset part of the switch
+			                i++; //advance
+			                if(string[i] != '{') //opening { must follow right after
+			                {
+			                    check(tobString_sprintf(&text, "{%s}{%s}", name, switchSET.str)==0, "tobString_sprintf failed");
+			                }
+			                else
+			                {
+				                i++; //next char
+				                for(;i<size;i++)
+				                {
+				                    if(string[i] == '}')
+					                    break;
+
+				                    check(tobString_AddChar(&switchUNSET, string[i])==0, "tobString_AddChar failed");
+				                }
 				
-			//search for the ending
-			for(;i< ( size - a - 3) ;i++) // there still has to be enough space for the test
-			{				    
-			    if(!strncmp(string+i, buffer, a+3)) //a+3 is the length of [/SECTIONNAME]
-			    {
-				//check if text must be added
-				if(text.len>0)
-				{
-				    result.numparts++;
-				    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-				    check_mem(result.parts);
+				                if(i==size) //couldn't find '}'
+				                {
+				                    check(tobString_sprintf(&text, "{%s}{%s}{", name, switchSET.str, switchUNSET.str)==0, "tobString_sprintf failed");
+				                }
+				                else
+				                {
+				                    //everything was found seems all valid
 
-				    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
-				    result.parts[result.numparts-1].numparts = 0;
-				    result.parts[result.numparts-1].parts = NULL;
+				                    //check if text must be added
+				                    if(text.len>0)
+				                    {
+					                    result.numparts++;
+					                    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+					                    check_mem(result.parts);
 
-				    result.parts[result.numparts-1].name = text;
+					                    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+					                    result.parts[result.numparts-1].numparts = 0;
+					                    result.parts[result.numparts-1].parts = NULL;
 
-				    tobString_Init(&text, 512);
-				}
-				
-				result.numparts++;
-				result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-				check_mem(result.parts);
+					                    result.parts[result.numparts-1].name = text;
 
-				tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
+					                    tobString_Init(&text, 512);
+				                    }
 
-				result.parts[result.numparts-1] = ParseFileSubString(sectioncontent.str, sectioncontent.len);
-				check(result.parts[result.numparts-1].type >= 0, "ParseFileSubString failed");
+				                    result.numparts++;
+				                    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+				                    check_mem(result.parts);
 
-				result.parts[result.numparts-1].type = PARSEDFILE_SECTION;
+				                    //add switchSET and switchUNSET parsed
+				                    result.parts[result.numparts-1].type = PARSEDFILE_SWITCH;
+				                    result.parts[result.numparts-1].numparts = 2;
+				                    result.parts[result.numparts-1].parts = malloc(sizeof(tobServ_parsedFile)*2);
+				                    check_mem(result.parts[result.numparts-1].parts);
 
-				check(tobString_Copy(&result.parts[result.numparts-1].name, name, a)==0, "tobString_Copy failed");				
+				                    result.parts[result.numparts-1].parts[0] = ParseFileSubString(switchSET.str, switchSET.len);
+				                    check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
+				                    
+				                    result.parts[result.numparts-1].parts[1] = ParseFileSubString(switchUNSET.str, switchUNSET.len);
+				                    check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
+				                }
+			                }
+			            }			
 
-				i += a + 3; //put the index behind the section
-				break;
-			    }
-			    else
-				check(tobString_AddChar(&sectioncontent, string[i])==0, "tobString_AddChar failed");
-			}
+		                tobString_Free(&switchSET);
+			            tobString_Free(&switchUNSET);
+		            }
+		            
+		            break;//done searching for the var name
+		        }
 
-			if(i == size - a - 3) //ending wasn't found till the very end
-			    check(tobString_sprintf(&text, "[%s]%s", name, sectioncontent.str)==0, "tobString_sprintf failed");
+		        //part of the name
+		        name[a] = string[i];
+		        a++;
+	        }
 
-			tobString_Free(&sectioncontent);
-		    }
-		    else
-			check(tobString_Add(&text, "[]", strlen("[]"))==0, "tobString_Add failed"); //no replacement needed because it isn't a valid sectionname
-
-		    break; //we are done
-		}
-
-		name[a] = string[i];
-		a++;
+	        if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding the second %
+	        {
+                check(tobString_AddChar(&text, '{')==0, "tobString_AddChar failed");
+		        fallback = 1;
+	        } //the variablename is too long or we have reached the end without finding the closing bracket
+		     //   check(tobString_sprintf(&text, "{%s", name)==0, "tobString_sprintf failed"); //add everything but don't replace anything
 	    }
-	}
-	else if(string[i] == '{') //SWITCH possibly found
-	{
-	    i++; //go to the next char
-	    a=0; //reset name index
-	    
-	    for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
-	    {
-		if(string[i] == '}') //end found
-		{
-		    i++;
-		    if(string[i] != '{') // { must follow right after
-		    {
-			check(tobString_sprintf(&text, "{%s}", name)==0, "tobString_sprintf failed"); //no switch found add everything
-		    }
-		    else
-		    {
-			i++; //next char
+	    else
+	        tobString_AddChar(&text, string[i]);
 
-			//get the onset part of the switch
-			for(;i<size;i++)
-			{
-			    if(string[i] == '}')
-				break;
 
-			    check(tobString_AddChar(&switchSET, string[i])==0, "tobString_AddChar failed");
-			}
-			if(i==size) //couldn't find '}'
-			{
-			    check(tobString_sprintf(&text, "{%s}{%s", name, switchSET.str)==0, "tobString_sprintf failed");
-			}
-			else
-			{
-			    //it was found now search for the unset part of the switch
-			    i++; //advance
-			    if(string[i] != '{') //opening { must follow right after
-			    {
-			        check(tobString_sprintf(&text, "{%s}{%s}", name, switchSET.str)==0, "tobString_sprintf failed");
-			    }
-			    else
-			    {
-				i++; //next char
-				for(;i<size;i++)
-				{
-				    if(string[i] == '}')
-					break;
-
-				    check(tobString_AddChar(&switchUNSET, string[i])==0, "tobString_AddChar failed");
-				}
-				
-				if(i==size) //couldn't find '}'
-				{
-				    check(tobString_sprintf(&text, "{%s}{%s}{", name, switchSET.str, switchUNSET.str)==0, "tobString_sprintf failed");
-				}
-				else
-				{
-				    //everything was found seems all valid
-
-				    //check if text must be added
-				    if(text.len>0)
-				    {
-					result.numparts++;
-					result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-					check_mem(result.parts);
-
-					result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
-					result.parts[result.numparts-1].numparts = 0;
-					result.parts[result.numparts-1].parts = NULL;
-
-					result.parts[result.numparts-1].name = text;
-
-					tobString_Init(&text, 512);
-				    }
-
-				    result.numparts++;
-				    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-				    check_mem(result.parts);
-
-				    //add switchSET and switchUNSET parsed
-				    result.parts[result.numparts-1].type = PARSEDFILE_SWITCH;
-				    result.parts[result.numparts-1].numparts = 2;
-				    result.parts[result.numparts-1].parts = malloc(sizeof(tobServ_parsedFile)*2);
-				    check_mem(result.parts[result.numparts-1].parts);
-
-				    result.parts[result.numparts-1].parts[0] = ParseFileSubString(switchSET.str, switchSET.len);
-				    check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
-				    
-				    result.parts[result.numparts-1].parts[1] = ParseFileSubString(switchUNSET.str, switchUNSET.len);
-				    check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
-				}
-			    }
-			}			
-
-		        tobString_Free(&switchSET);
-			tobString_Free(&switchUNSET);
-		    }
-		    
-		    break;//done searching for the var name
-		}
-
-		//part of the name
-		name[a] = string[i];
-		a++;
-	    }
-
-	    if(a==MAX_VARIABLE_LENGTH || i==size) //the variablename is too long or we have reached the end without finding the closing bracket
-		check(tobString_sprintf(&text, "{%s", name)==0, "tobString_sprintf failed"); //add everything but don't replace anything
-	}
-	else
-	    tobString_AddChar(&text, string[i]);
+        if (fallback == 1)
+        {
+		    check(tobString_Add(&text, name, a)==0, "tobString_Add failed");
+            if (a == MAX_VARIABLE_LENGTH) i--; //reparse the current character, otherwise it would get skipped
+        }
     }
 
     //add last text part
     if(text.len>0)
     {
-	result.numparts++;
-	result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-	check_mem(result.parts);
+	    result.numparts++;
+	    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+	    check_mem(result.parts);
 
-	result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
-	result.parts[result.numparts-1].numparts = 0;
-	result.parts[result.numparts-1].parts = NULL;
+	    result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+	    result.parts[result.numparts-1].numparts = 0;
+	    result.parts[result.numparts-1].parts = NULL;
 
-	result.parts[result.numparts-1].name = text;
+	    result.parts[result.numparts-1].name = text;
     }
     else
-	tobString_Free(&text);
+	    tobString_Free(&text);
     
 
     return result;
