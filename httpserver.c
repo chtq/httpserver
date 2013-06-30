@@ -11,8 +11,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
-#include <readline/readline.h>
-#include <readline/history.h>
 
 #include <tobCONF.h>
 #include <tobFUNC.h>
@@ -25,25 +23,10 @@
 #include "dbg.h"
 
 #include "ModuleManager.h"
+#include "commandline.h"
 
 #define VERSION "0.1"
 #define MODULEFILE "modules.cfg"
-
-typedef struct _tobServ_commandline
-{
-    pthread_t mainthreadID;
-    pthread_t commandthreadID;
-    uint32_t doshutdown;
-
-    tobServ_modulelist *modulelist;
-    tobServ_FileCache *filecache;
-
-    uint32_t numthreads;
-    uint32_t maxthreads;
-    uint32_t numrequests;
-    uint32_t peakthreads;
-    pthread_mutex_t commandline_mutex;
-} tobServ_commandline;
 
 typedef struct _tobServ_thread
 {
@@ -64,14 +47,12 @@ void send_redirect(int32_t connection, char *content, uint32_t code);
 header get_header(int32_t connection, tobServ_thread*);
 int32_t FreeResponse(tobServ_response);
 int32_t FreeResult(header result);
-void *handle_commandline(void *arg);
 void main_shutdown_handler(int32_t);
 int32_t FreeHeader(header);
 int32_t FreeSessions(tobServ_SessionList*);
 int32_t StartSession(tobServ_SessionList*, char*, uint32_t);
 int32_t GetSessionCodeFromCookie(char*);
 char *urldecode(char*);
-void commandline_printCacheList(tobServ_FileCache *filecache);
 
 int main(int argc, char *argv[])
 {
@@ -198,36 +179,36 @@ int main(int argc, char *argv[])
     {       
         errno = 0;
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-	    check(newsockfd>=0, "accept failed");	
+            check(newsockfd>=0, "accept failed");       
 
-	    inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
+            inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
 
-	    for(i=0; i<thread_num; i++)
-	    {
-	        if(threads[i].threadID==0)
-	        {
-		    threads[i].connection = newsockfd;
-		    threads[i].created = time(NULL);
-		    threads[i].last_active = time(NULL);
-		    threads[i].finished = &thread_finished;
-		    threads[i].mutex = &mutex_finished;
-		    threads[i].modulelist = &modulelist;
-		    stringcpy(threads[i].querry.IP, IP, 20);
-		    threads[i].querry.time = time(NULL);
-		    threads[i].commandline = &commandline;
-		    threads[i].querry.sessionlist = &sessionlist;
-		    threads[i].querry.filecache = &filecache;
+            for(i=0; i<thread_num; i++)
+            {
+                if(threads[i].threadID==0)
+                {
+                    threads[i].connection = newsockfd;
+                    threads[i].created = time(NULL);
+                    threads[i].last_active = time(NULL);
+                    threads[i].finished = &thread_finished;
+                    threads[i].mutex = &mutex_finished;
+                    threads[i].modulelist = &modulelist;
+                    stringcpy(threads[i].querry.IP, IP, 20);
+                    threads[i].querry.time = time(NULL);
+                    threads[i].commandline = &commandline;
+                    threads[i].querry.sessionlist = &sessionlist;
+                    threads[i].querry.filecache = &filecache;
                         
-		    check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
+                    check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
 
-		    break;
-	        }
-	    }
-	    if(i==thread_num) //no open slots close the connection
-	    {
-	        log_warn("Request was dropped because maxthreads was reached");
-	        close(newsockfd);
-	    }
+                    break;
+                }
+            }
+            if(i==thread_num) //no open slots close the connection
+            {
+                log_warn("Request was dropped because maxthreads was reached");
+                close(newsockfd);
+            }
   
     }
 
@@ -417,12 +398,12 @@ void *handle_request(void *arg)
                         if (strlen(request.path) > 1) action = request.path + 1;
                         else action = NULL;     
                     }
-		            //store module path		
-		            strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist->modules[i].path);
-		        
+                            //store module path         
+                            strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist->modules[i].path);
+                        
                     response = ((tobServ_thread*)arg)->modulelist->modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist->modules[i].data);
 
-		            pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
+                            pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
 
 
                     if(!response.response || !response.type)
@@ -639,7 +620,7 @@ header get_header(int connection, tobServ_thread *arg)
             {
                 n = read(connection,buffer,255);
                 buffer[n] = '\0';
-		check(n>=0, "ERROR reading from socket");
+                check(n>=0, "ERROR reading from socket");
 
                 if((contentwritten+n)>contentlength)
                 {
@@ -679,8 +660,8 @@ header get_header(int connection, tobServ_thread *arg)
     if(!strcmp(result.method, "POST") && content)
     {
         result.numpostdata = explode(&lines, content, "&");
-	if(result.numpostdata)
-	    result.postdata = malloc(sizeof(tobServ_PostData)*result.numpostdata);
+        if(result.numpostdata)
+            result.postdata = malloc(sizeof(tobServ_PostData)*result.numpostdata);
 
         for(i=0; i<result.numpostdata; i++)
         {
@@ -724,22 +705,22 @@ header get_header(int connection, tobServ_thread *arg)
 
     if((getvarstring = strchr(result.path, '?')))
     {
-	getvarstring++;//skip the "?"
-	
-	num = result.numgetdata = explode(&lines, getvarstring, "&");
-	if(result.numgetdata)
-	    result.getdata = malloc(sizeof(tobServ_GetData)*result.numgetdata);
+        getvarstring++;//skip the "?"
+        
+        num = result.numgetdata = explode(&lines, getvarstring, "&");
+        if(result.numgetdata)
+            result.getdata = malloc(sizeof(tobServ_GetData)*result.numgetdata);
 
-	a=0;
-	for(i=0;i<num;i++)
-	{
-	    numwords = explode(&words, lines[i], "=");
+        a=0;
+        for(i=0;i<num;i++)
+        {
+            numwords = explode(&words, lines[i], "=");
 
             if(numwords!=2)
             {
-		//invalid get variable
+                //invalid get variable
                 result.numgetdata--;
-		result.getdata = realloc(result.getdata, sizeof(tobServ_GetData)*result.numgetdata);
+                result.getdata = realloc(result.getdata, sizeof(tobServ_GetData)*result.numgetdata);
             }
             else
             {
@@ -748,14 +729,14 @@ header get_header(int connection, tobServ_thread *arg)
                 result.getdata[a].value = malloc(sizeof(char)*(strlen(words[1])+1));
                 strcpy(result.getdata[a].value, words[1]);
                 urldecode(result.getdata[a].value);
-		a++;
+                a++;
             }
-	    free(words);
-	    words = NULL;
-	}
-	
-	free(lines);
-	lines = NULL;
+            free(words);
+            words = NULL;
+        }
+        
+        free(lines);
+        lines = NULL;
     }
 
     if(headerstring)
@@ -778,33 +759,33 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
     switch(code)
     {
     case 200:
-	status = "200 OK";
-	break;
+        status = "200 OK";
+        break;
     case 301:
     case 302:
-	send_redirect(connection, content, code);
-	return;
+        send_redirect(connection, content, code);
+        return;
     case 400:
-	status = "400 Bad Request";
-	break;
+        status = "400 Bad Request";
+        break;
     case 401:
-	status = "401 Unauthorized";
-	break;
+        status = "401 Unauthorized";
+        break;
     case 403:
-	status = "402 Forbidden";
-	break;
+        status = "402 Forbidden";
+        break;
     case 404:
-	status = "404 Not Found";
-	break;
+        status = "404 Not Found";
+        break;
     case 500:
     status = "500 Internal Server Error";
     break;
     case 503:
-	status = "503 Service Unavailable";
-	break;
+        status = "503 Service Unavailable";
+        break;
     case 451:
-	status = "451 Unavailable For Legal Reasons";
-	break;
+        status = "451 Unavailable For Legal Reasons";
+        break;
     }
     
     char headerstring[256];
@@ -813,9 +794,9 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
 
     headerstring[0] = '\0';
     if(usecache)
-	cache = "Cache-Control: max-age=10000\r\n";
+        cache = "Cache-Control: max-age=10000\r\n";
     else
-	cache = "";
+        cache = "";
 
     if (!nocookies)
         snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);   
@@ -915,72 +896,6 @@ int FreeHeader(header result)
         free(result.getdata);
 
     return 0;
-}
-
-void *handle_commandline(void *arg)
-{
-    char *command;
-    tobServ_commandline *commandline;
-
-    commandline = (tobServ_commandline*)arg;
-
-    while(1)
-    {
-        command = readline("> ");
-        add_history(command);
-
-        if(!strcmp(command, "help"))
-            printf("available commands:\nhelp - shows this message\nstats - show general server statistics\ncache stats - show cache statistics\ncache list - show current content of cache\nreload - reloads the modules\nexit/shutdown - shuts the server down\n");
-        else if(!strcmp(command, "shutdown") || !strcmp(command, "exit"))
-        {
-            printf("tobServ going to shutdown......");
-            free(command);
-            commandline->doshutdown = 1;
-            pthread_kill(commandline->mainthreadID, SIGTERM);
-            return 0;
-        }
-
-
-	    //the readings aren't thread safe but who cares. Read operations can't destroy anything
-        else if(!strcmp(command, "stats"))
-            printf("tobServ %s Current Status\nThreads: %i/%i PeakThreads: %i TotalRequests: %i\n", VERSION, commandline->numthreads, commandline->maxthreads, commandline->peakthreads, commandline->numrequests);
-	    else if(!strcmp(command, "cache stats"))
-	        printf("Cached Files: %i/%i with a total size of %iKB\n", commandline->filecache->numfiles, commandline->filecache->maxfiles, GetTotalFileCacheSize(commandline->filecache)/1024);
-
-	    else if(!strcmp(command, "cache list"))
-	        commandline_printCacheList(commandline->filecache);
-	    else if(!strcmp(command, "reload"))
-	    {
-            printf("tobServ going to reload modules....\n");
-	        ModuleManager_FreeModules(commandline->modulelist);
-	        if(ModuleManager_LoadModules(commandline->modulelist, MODULEFILE) < 0)
-		    printf("Loading modules failed\n");
-	        else
-		    printf("%i Modules were successfully loaded\n", commandline->modulelist->count);		
-	    }
-
-        free(command);
-    }
-    return 0;
-}
-
-void commandline_printCacheList(tobServ_FileCache *filecache)
-{
-    unsigned int i, currenttime;
-
-    currenttime = time(NULL);    
-
-    printf("%-50s%-10s%-20s%-5s\n", "Path", "Size", "LastAccess in s", "usecount"); 
-
-    pthread_rwlock_rdlock(&filecache->lock);
-    for(i=0;i<filecache->numfiles;i++)
-    {
-	printf("\n%-50s%-10i%-20i%-5i", filecache->files[i].path, filecache->files[i].file->size, currenttime-filecache->files[i].lastaccess, filecache->files[i].usecount);
-    }
-    pthread_rwlock_unlock(&filecache->lock);
-
-    if(i>0) //new line for the next cmd
-	printf("\n");
 }
 
 int FreeSessions(tobServ_SessionList *sessionlist)
@@ -1123,8 +1038,8 @@ char *urldecode(char *input)
              input[a]=replacechar;
              i+=2;
          }
-	 else if(input[i]=='+')
-	     input[a] = ' ';
+         else if(input[i]=='+')
+             input[a] = ' ';
          else if(a < i)
              input[a]=input[i];
 
