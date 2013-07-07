@@ -12,14 +12,17 @@ LDFLAGSAPI = -lpthread -ldl -lreadline -ltobFUNC -ltobCONF -ldbg
 
 all: httpserver clean
 
-httpserver: httpserver.o ModuleManager.o
+httpserver: httpserver.o ModuleManager.o commandline.o
 	$(CC) -o $@ $^ $(LDFLAGS)
 
-API: FileCache.o Sessions.o PostVar.o GetVar.o Template.o tobServModule.o
+API: FileCache.o Sessions.o PostVar.o GetVar.o Template.o tobServModule.o commandlineAPI.o
 	$(CC) $(CFLAGSAPI) -o libtobServAPI.so.$(VERSION) $^ $(LDFLAGSAPI)
 
 ModuleManager.o: ModuleManager.c ModuleManager.h
 	$(CC) -c $(CFLAGS) $<
+
+commandlineAPI.o: commandlineAPI.c commandlineAPI.h
+	$(CC) -fPIC -c $(CFLAGS) $<
 
 FileCache.o: FileCache.c FileCache.h Template.h
 	$(CC) -fPIC -c $(CFLAGS) $<
