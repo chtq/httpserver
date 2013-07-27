@@ -24,28 +24,35 @@ int32_t FreeTemplate(tobServ_template *templatehandle)
     
     for(i=0;i<templatehandle->numvariables;i++)
     {
-	tobString_Free(&templatehandle->variables[i].name);
-	tobString_Free(&templatehandle->variables[i].replace);
+	    tobString_Free(&templatehandle->variables[i].name);
+	    tobString_Free(&templatehandle->variables[i].replace);
     }
     if(templatehandle->variables)
-	free(templatehandle->variables);
+	    free(templatehandle->variables);
 
     for(i=0;i<templatehandle->numswitches;i++)
     {
-	tobString_Free(&templatehandle->switches[i].name);
+	    tobString_Free(&templatehandle->switches[i].name);
     }
     if(templatehandle->switches)
-	free(templatehandle->switches);
+	    free(templatehandle->switches);
 
     for(i=0;i<templatehandle->numsections;i++)
     {
-	tobString_Free(&templatehandle->sections[i].name);
+	    tobString_Free(&templatehandle->sections[i].name);
+	    for(a=0;a<templatehandle->sections[i].numrows;a++)
+        {
+	        FreeTemplate(templatehandle->sections[i].rows[a]);
+            free(templatehandle->sections[i].rows[a]);
+        }
 
-	for(a=0;a<templatehandle->sections[i].numrows;a++)
-	    FreeTemplate(templatehandle->sections[i].rows[a]);
+        free(templatehandle->sections[i].rows);
+
+
+    
     }
     if(templatehandle->sections)
-	free(templatehandle->sections);
+	    free(templatehandle->sections);
 
     templatehandle->variables=NULL;
     templatehandle->numvariables=0;
@@ -275,10 +282,12 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
 				                result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
 				                check_mem(result.parts);
 
-				                tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
+				                
 
 				                result.parts[result.numparts-1] = ParseFileSubString(sectioncontent.str, sectioncontent.len);
 				                check(result.parts[result.numparts-1].type >= 0, "ParseFileSubString failed");
+
+                                tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
 
 				                result.parts[result.numparts-1].type = PARSEDFILE_SECTION;
 
