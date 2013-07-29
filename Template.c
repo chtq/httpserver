@@ -275,16 +275,15 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
                                 result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
                                 check_mem(result.parts);
 
-                                tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
-
                                 result.parts[result.numparts-1] = ParseFileSubString(sectioncontent.str, sectioncontent.len);
                                 check(result.parts[result.numparts-1].type >= 0, "ParseFileSubString failed");
 
+                                tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
                                 result.parts[result.numparts-1].type = PARSEDFILE_SECTION;
 
                                 check(tobString_Copy(&result.parts[result.numparts-1].name, name, a)==0, "tobString_Copy failed");                              
 
-                                i += a + 3; //put the index behind the section
+                                i += a + 2; //put the index add the end of the section
                                 break;
                             }
                             else

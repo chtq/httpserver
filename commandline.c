@@ -64,7 +64,7 @@ void *handle_commandline(void *arg)
 
             if(i==commandline->numCommands)
             {
-                printf("Command '%s' not found enter help to get a list of available commands", argv[0]);
+                printf("Command '%s' not found enter help to get a list of available commands\n", argv[0]);
             }
 
             pthread_mutex_unlock(&commandline->commandlist_mutex);
@@ -154,9 +154,10 @@ int32_t commandline_printHelp(uint32_t argc, char **argv, void *data)
     tobServ_commandline *commandline;
     uint32_t i;
 
-    commandline = data; //cast: data contains the pointer to the commandline struct
+    //DURING A COMMAND EXECUTION the commandline struct is always locked
+    //-> no need to lock it here
 
-    pthread_mutex_lock(&commandline->commandlist_mutex);
+    commandline = data; //cast: data contains the pointer to the commandline struct
     
     if(argc<2) //no argument (argv[0] is the name of the command itself)
     {
@@ -197,8 +198,6 @@ int32_t commandline_printHelp(uint32_t argc, char **argv, void *data)
             printf("Help for %s:\n%s\n", argv[1], commandline->commands[i].description);
         }
     }
-
-    pthread_mutex_unlock(&commandline->commandlist_mutex);
 
     return 0;
 }

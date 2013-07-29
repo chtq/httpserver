@@ -14,6 +14,8 @@ int32_t ModuleManager_Initialize(tobServ_modulelist *modulelist, tobServ_command
     modulelist->modules = NULL;
     modulelist->commandline = commandline;
 
+    pthread_rwlock_init(&modulelist->lock, NULL);
+
     return 0;
 }
 
@@ -35,7 +37,7 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
     tobCONF_Initialize(&modulefile);
 
     //create lock
-    check(pthread_rwlock_init(&modulelist->lock, NULL)==0, "pthread_rwlock_init failed");
+    check(pthread_rwlock_wrlock(&modulelist->lock)==0, "pthread_rwlock_wrlock failed");
     isLocked = 1;
 
     //get the modules from file
@@ -123,7 +125,7 @@ error:
     
     tobCONF_Free(&modulefile);
 
-    modulelist->count = 0; //make sure FreeModules doesn't call destroy again    
+    modulelist->count = 0; //make sure FreeModules doesn't call the destroy functions again    
     ModuleManager_FreeModules(modulelist);
     return -1;
 }
@@ -149,8 +151,6 @@ int32_t ModuleManager_FreeModules(tobServ_modulelist *modulelist)
     modulelist->count = 0;
 
     pthread_rwlock_unlock(&modulelist->lock);
-    
-    pthread_rwlock_destroy(&modulelist->lock);
 
     return 0;
 

@@ -172,14 +172,14 @@ int main(int argc, char *argv[])
     commandline.numCommands = 0;
     commandline.commands = NULL;
 
+    pthread_mutex_init(&commandline.commandlist_mutex, NULL);
+
     //LOADING MODULES
     ModuleManager_Initialize(&modulelist, &commandline);
     
     //don't shutdown on failure
     if(ModuleManager_LoadModules(&modulelist, MODULEFILE)<0)
         log_info("Couldn't load modules, check your module file and try reload!");
-
-    pthread_mutex_init(&commandline.commandlist_mutex, NULL);
 
     //FileCache
     check(InitializeFileCache(&filecache, maxfiles, maxfilesize)==0, "InitializeFileCache failed");
@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
     //add cmds to the command handler
     //they are never unregistered because they are needed for the entire time the program runs
     pthread_mutex_init(&serverstats.stats_mutex, NULL);
-    commandlineAPI_registerCMD(&commandline, "stats", "prints server stats", commandline_printHelp, (void*)&serverstats);
+    commandlineAPI_registerCMD(&commandline, "stats", "prints server stats", commandline_printServerStats, (void*)&serverstats);
     commandlineAPI_registerCMD(&commandline, "reload", "reloads modules", commandline_reloadModules, (void*)&modulelist);
     commandlineAPI_registerCMD(&commandline, "cache_stats", "prints cache stats", commandline_printCacheStats, (void*)&filecache);
     commandlineAPI_registerCMD(&commandline, "cache_list", "lists cache content", commandline_printCacheList,  (void*)&filecache);
@@ -270,7 +270,8 @@ error:
     //ModuleManager_FreeModules(&modulelist);  
     //causes infinite loop
 
-    if (threads) free(threads);
+    if(threads)
+        free(threads);
 
     return 1;
 }
