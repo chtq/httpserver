@@ -36,6 +36,8 @@ int32_t InitializeFileCache(tobServ_FileCache *filecache, uint32_t maxfiles, uin
     check(pthread_cond_init(&filecache->freeTookPlaceCond, NULL)==0, "pthread_cond_init failed");
     check(pthread_rwlock_init(&filecache->lock, NULL)==0, "pthread_rwlock_init failed");
 
+    filecache->initialized = 1;
+
     return 0;
 
 error:
@@ -46,6 +48,9 @@ error:
 int32_t FreeFileCache(tobServ_FileCache *filecache)
 {
     uint32_t i;
+
+    if(!filecache->initialized) //nothing todo
+        return 0;
     
     pthread_rwlock_destroy(&filecache->lock);
     pthread_mutex_destroy(&filecache->freeTookPlaceMutex);

@@ -77,11 +77,15 @@ int main(int argc, char *argv[])
     tobServ_commandline commandline;
 
     tobServ_SessionList sessionlist;
+    sessionlist.initialized = 0;
+
     pthread_mutex_t mutex_session;
 
     struct sigaction new_term_action;
 
     tobServ_FileCache filecache;
+    filecache.initialized = 0;
+
     uint32_t maxfiles;
     uint32_t maxfilesize;
 
@@ -91,7 +95,6 @@ int main(int argc, char *argv[])
     tobServ_ServerStats serverstats;
 
     tobCONF_Initialize(&configfile);
-    ModuleManager_Initialize(&modulelist);
 
     //init server stats
     serverstats.numthreads = 0;
@@ -138,6 +141,7 @@ int main(int argc, char *argv[])
     pthread_mutex_init(&mutex_session, NULL);
 
     sessionlist.mutex_session = &mutex_session;
+    sessionlist.initialized = 1;
 
     pthread_cond_init(&thread_finished, NULL);
     pthread_mutex_init(&mutex_finished, NULL);
@@ -147,11 +151,6 @@ int main(int argc, char *argv[])
     bzero((char *)threads, sizeof(tobServ_thread)*thread_num);
 
     serverstats.maxthreads = thread_num;
-
-    //LOADING MODULES
-    //don't shutdown on failure
-    if(ModuleManager_LoadModules(&modulelist, MODULEFILE)<0)
-        log_info("Couldn't load modules, check your module file and try reload!");
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     check(sockfd>=0, "Opening socket failed!");
@@ -170,6 +169,15 @@ int main(int argc, char *argv[])
 
     commandline.mainthreadID = pthread_self();
     commandline.doshutdown = 0;
+    commandline.numCommands = 0;
+    commandline.commands = NULL;
+
+    //LOADING MODULES
+    ModuleManager_Initialize(&modulelist, &commandline);
+    
+    //don't shutdown on failure
+    if(ModuleManager_LoadModules(&modulelist, MODULEFILE)<0)
+        log_info("Couldn't load modules, check your module file and try reload!");
 
     pthread_mutex_init(&commandline.commandlist_mutex, NULL);
 
@@ -915,6 +923,9 @@ int FreeSessions(tobServ_SessionList *sessionlist)
 {
     int i;
 
+    if(!sessionlist->initialized) //nothing todo
+        return 0;
+
     pthread_mutex_lock(sessionlist->mutex_session);
 
     for(i=0; i<sessionlist->num; i++)
@@ -929,6 +940,8 @@ int FreeSessions(tobServ_SessionList *sessionlist)
     sessionlist->num = 0;
 
     pthread_mutex_unlock(sessionlist->mutex_session);
+
+    sessionlist->initialized = 0;
 
     return 0;
 }

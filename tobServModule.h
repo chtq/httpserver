@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "commandline.h"
 
 typedef struct _tobServ_PostData
 {
@@ -74,12 +75,12 @@ typedef tobServ_response (*module_QUERRY_function)(tobServ_Querry querry, char *
 //returns 0 on success
 //-1 on failure. If Init failed it won't be added to the modulelist
 //data can be filled with data
-typedef int32_t (*module_INIT_function)(char *modulename, char *modulepath, void **data);
+typedef int32_t (*module_INIT_function)(char *modulename, char *modulepath, tobServ_commandline *commandline, void **data);
 
 //returns 0 on success
 //-1 on failure. Failure will be ignored by the server
 //data is the data pointer from Init
-typedef int32_t (*module_DESTROY_function)(char *modulename, char *modulepath, void *data);
+typedef int32_t (*module_DESTROY_function)(char *modulename, char *modulepath, tobServ_commandline *commandline, void *data);
 
 //allocates space for the output, must be freed
 char *tobServ_FormRelativePath(tobServ_Querry *querry, char *path);

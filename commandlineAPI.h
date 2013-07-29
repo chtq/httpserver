@@ -1,8 +1,10 @@
 #ifndef _COMMANDLINEAPI_H_
 #define _COMMANDLINEAPI_H_
 
-#include "commandline.h"
 #include <stdint.h>
+
+struct _tobServ_commandline;
+typedef struct _tobServ_commandline tobServ_commandline;
 
 //register a cmd specific to a module
 //the registered cmd is called by CMD

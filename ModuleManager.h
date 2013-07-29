@@ -2,6 +2,7 @@
 #define _MODULEMANAGER_H_
 
 #include <tobServModule.h>
+#include "commandline.h"
 #include <stdint.h>
 
 #define MODULEMANAGER_LASTERROR_SIZE 512
@@ -26,6 +27,7 @@ typedef struct _tobServ_modulelist
 {
     tobServ_module *modules;
     int count;
+    tobServ_commandline *commandline;
 
     pthread_rwlock_t lock;
 
@@ -36,7 +38,7 @@ typedef struct _tobServ_modulelist
 //returns 0 on success
 //-1 on error. Error is written to log
 //calls init function of modules
-int32_t ModuleManager_Initialize(tobServ_modulelist *modulelist);
+int32_t ModuleManager_Initialize(tobServ_modulelist *modulelist, tobServ_commandline *commandline);
 
 int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path);
 
