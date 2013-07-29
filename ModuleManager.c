@@ -1,4 +1,5 @@
 #include "ModuleManager.h"
+#include "commandline.h"
 #include "logger.h"
 #include "dbg.h"
 
@@ -7,16 +8,20 @@
 #include <dlfcn.h>
 #include <stdint.h>
 
-int32_t ModuleManager_Initialize(tobServ_modulelist *modulelist)
+int32_t ModuleManager_Initialize(tobServ_modulelist *modulelist, tobServ_commandline *commandline)
 {
     modulelist->count = 0;
     modulelist->modules = NULL;
+    modulelist->commandline = commandline;
+
+    pthread_rwlock_init(&modulelist->lock, NULL);
 
     return 0;
 }
 
 int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
 {
+    int32_t result;
     uint32_t i, a;
     uint32_t isLocked=0;
     uint32_t iterateModule = 0;
@@ -32,7 +37,7 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
     tobCONF_Initialize(&modulefile);
 
     //create lock
-    check(pthread_rwlock_init(&modulelist->lock, NULL)==0, "pthread_rwlock_init failed");
+    check(pthread_rwlock_wrlock(&modulelist->lock)==0, "pthread_rwlock_wrlock failed");
     isLocked = 1;
 
     //get the modules from file
@@ -97,9 +102,10 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
     {
 	initModule = dlsym(modulelist->modules[iterateModule].handle, "tobModule_InitFunction");
 
-        check(initModule, "tobModule_InitFunction failed on module: %s", modulelist->modules[iterateModule].name);
+        check(initModule, "tobModule_InitFunction not found for module: %s", modulelist->modules[iterateModule].name);
 
-	initModule(modulelist->modules[iterateModule].name, modulelist->modules[iterateModule].path, &modulelist->modules[iterateModule].data);
+	result = initModule(modulelist->modules[iterateModule].name, modulelist->modules[iterateModule].path, modulelist->commandline, &modulelist->modules[iterateModule].data);
+        check(result>=0, "tobModule_InitFunction failed for module: %s", modulelist->modules[iterateModule].name);
     }
 
     log_info("%i modules successfully loaded", modulelist->count);
@@ -112,12 +118,14 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
 error:
     //destroy but only those which are initialized already
     for(a=0;a<iterateModule;a++)
-	modulelist->modules[a].destroy_function(modulelist->modules[a].name, modulelist->modules[a].path, modulelist->modules[a].data);
+	modulelist->modules[a].destroy_function(modulelist->modules[a].name, modulelist->modules[a].path, modulelist->commandline, modulelist->modules[a].data);
 
     if(isLocked)
 	pthread_rwlock_unlock(&modulelist->lock);
     
     tobCONF_Free(&modulefile);
+
+    modulelist->count = 0; //make sure FreeModules doesn't call the destroy functions again    
     ModuleManager_FreeModules(modulelist);
     return -1;
 }
@@ -130,7 +138,7 @@ int32_t ModuleManager_FreeModules(tobServ_modulelist *modulelist)
 
     for(i=0; i < modulelist->count; i++)
     {
-	if(modulelist->modules[i].destroy_function(modulelist->modules[i].name, modulelist->modules[i].path, modulelist->modules[i].data)<0)
+	if(modulelist->modules[i].destroy_function(modulelist->modules[i].name, modulelist->modules[i].path, modulelist->commandline, modulelist->modules[i].data)<0)
 	    log_warn("destroy_function of %s failed", modulelist->modules[i].name); //nothing fatal
 
         dlclose(modulelist->modules[i].handle);
@@ -143,8 +151,6 @@ int32_t ModuleManager_FreeModules(tobServ_modulelist *modulelist)
     modulelist->count = 0;
 
     pthread_rwlock_unlock(&modulelist->lock);
-    
-    pthread_rwlock_destroy(&modulelist->lock);
 
     return 0;
 

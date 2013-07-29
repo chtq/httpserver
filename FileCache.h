@@ -23,6 +23,7 @@ typedef struct _tobServ_CachedFile
 
 typedef struct _tobServ_FileCache
 {
+    int32_t initialized;
     uint32_t maxfiles;
     uint32_t maxfilesize;
     uint32_t active; //specifies if it can be used right now

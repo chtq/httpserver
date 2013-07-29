@@ -36,6 +36,8 @@ int32_t InitializeFileCache(tobServ_FileCache *filecache, uint32_t maxfiles, uin
     check(pthread_cond_init(&filecache->freeTookPlaceCond, NULL)==0, "pthread_cond_init failed");
     check(pthread_rwlock_init(&filecache->lock, NULL)==0, "pthread_rwlock_init failed");
 
+    filecache->initialized = 1;
+
     return 0;
 
 error:
@@ -46,6 +48,9 @@ error:
 int32_t FreeFileCache(tobServ_FileCache *filecache)
 {
     uint32_t i;
+
+    if(!filecache->initialized) //nothing todo
+        return 0;
     
     pthread_rwlock_destroy(&filecache->lock);
     pthread_mutex_destroy(&filecache->freeTookPlaceMutex);
@@ -142,16 +147,16 @@ struct _tobServ_file GetFileFromFileCache(tobServ_FileCache* filecache, char *pa
 
     if(i==filecache->numfiles) //file not found in cache
     {
-	    result = LoadFileFromDisk(path);
-	    check(result.content, "LoadFileFromDisk failed for %s", path);
+        result = LoadFileFromDisk(path);
+        check(result.content, "LoadFileFromDisk failed for %s", path);
 
-	    if(parse)
-	    {
-	        result.parsedFile = ParseFile(&result);
-	        check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
-	    }
+        if(parse)
+        {
+            result.parsedFile = ParseFile(&result);
+            check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
+        }
 
-	    result.cacheID = AddFileToCache(filecache, path, result);
+        result.cacheID = AddFileToCache(filecache, path, result);
         if (result.cacheID <0) 
         {
             log_warn("AddFileToCache returned %d for %s", result.cacheID, path);

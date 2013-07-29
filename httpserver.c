@@ -11,8 +11,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
-#include <readline/readline.h>
-#include <readline/history.h>
 
 #include <tobCONF.h>
 #include <tobFUNC.h>
@@ -21,29 +19,13 @@
 #include <FileCache.h>
 #include <Template.h>
 #include <Sessions.h>
+#include <commandlineAPI.h>
 
 #include "dbg.h"
 
 #include "ModuleManager.h"
-
-#define VERSION "0.1"
-#define MODULEFILE "modules.cfg"
-
-typedef struct _tobServ_commandline
-{
-    pthread_t mainthreadID;
-    pthread_t commandthreadID;
-    uint32_t doshutdown;
-
-    tobServ_modulelist *modulelist;
-    tobServ_FileCache *filecache;
-
-    uint32_t numthreads;
-    uint32_t maxthreads;
-    uint32_t numrequests;
-    uint32_t peakthreads;
-    pthread_mutex_t commandline_mutex;
-} tobServ_commandline;
+#include "commandline.h"
+#include "globalconstants.h"
 
 typedef struct _tobServ_thread
 {
@@ -56,6 +38,7 @@ typedef struct _tobServ_thread
     tobServ_modulelist *modulelist;
     tobServ_Querry querry;
     tobServ_commandline *commandline;
+    tobServ_ServerStats *serverstats;
 } tobServ_thread;
 
 void *handle_request(void *arg);
@@ -64,14 +47,12 @@ void send_redirect(int32_t connection, char *content, uint32_t code);
 header get_header(int32_t connection, tobServ_thread*);
 int32_t FreeResponse(tobServ_response);
 int32_t FreeResult(header result);
-void *handle_commandline(void *arg);
 void main_shutdown_handler(int32_t);
 int32_t FreeHeader(header);
 int32_t FreeSessions(tobServ_SessionList*);
 int32_t StartSession(tobServ_SessionList*, char*, uint32_t);
 int32_t GetSessionCodeFromCookie(char*);
 char *urldecode(char*);
-void commandline_printCacheList(tobServ_FileCache *filecache);
 
 int main(int argc, char *argv[])
 {
@@ -96,23 +77,34 @@ int main(int argc, char *argv[])
     tobServ_commandline commandline;
 
     tobServ_SessionList sessionlist;
+    sessionlist.initialized = 0;
+
     pthread_mutex_t mutex_session;
 
     struct sigaction new_term_action;
 
     tobServ_FileCache filecache;
+    filecache.initialized = 0;
+
     uint32_t maxfiles;
     uint32_t maxfilesize;
 
     tobCONF_File configfile;
     tobCONF_Section *configsection;
 
-    tobCONF_Initialize(&configfile);
-    ModuleManager_Initialize(&modulelist);
+    tobServ_ServerStats serverstats;
 
-    //code
+    tobCONF_Initialize(&configfile);
+
+    //init server stats
+    serverstats.numthreads = 0;
+    serverstats.maxthreads = 0;
+    serverstats.numrequests = 0;
+    serverstats.peakthreads = 0;
+
     srand(time(NULL));
 
+    //parse cfg
     check(tobCONF_ReadFile(&configfile, "server.cfg")==0, "on reading ConfigFile: %s", tobCONF_GetLastError(&configfile));
 
     configsection = tobCONF_GetSection(&configfile, "server");
@@ -136,6 +128,8 @@ int main(int argc, char *argv[])
     tobCONF_Free(&configfile);
     //done parsing the config
 
+    //set up own handler for SIGTERM
+    //is sent by commandline
     new_term_action.sa_handler = main_shutdown_handler;
     sigemptyset (&new_term_action.sa_mask);
     new_term_action.sa_flags = 0;
@@ -147,6 +141,7 @@ int main(int argc, char *argv[])
     pthread_mutex_init(&mutex_session, NULL);
 
     sessionlist.mutex_session = &mutex_session;
+    sessionlist.initialized = 1;
 
     pthread_cond_init(&thread_finished, NULL);
     pthread_mutex_init(&mutex_finished, NULL);
@@ -155,10 +150,7 @@ int main(int argc, char *argv[])
     check_mem(threads);
     bzero((char *)threads, sizeof(tobServ_thread)*thread_num);
 
-    //LOADING MODULES
-    //don't shutdown on failure
-    if(ModuleManager_LoadModules(&modulelist, MODULEFILE)<0)
-        log_info("Couldn't load modules, check your module file and try reload!");
+    serverstats.maxthreads = thread_num;
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     check(sockfd>=0, "Opening socket failed!");
@@ -175,22 +167,33 @@ int main(int argc, char *argv[])
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-    commandline.doshutdown = 0;
-    commandline.maxthreads = thread_num;
-    commandline.numrequests = 0;
-    commandline.numthreads = 0;
-    commandline.peakthreads = 0;
     commandline.mainthreadID = pthread_self();
-    commandline.modulelist = &modulelist;
+    commandline.doshutdown = 0;
+    commandline.numCommands = 0;
+    commandline.commands = NULL;
 
-    pthread_mutex_init(&commandline.commandline_mutex, NULL);
+    pthread_mutex_init(&commandline.commandlist_mutex, NULL);
+
+    //LOADING MODULES
+    ModuleManager_Initialize(&modulelist, &commandline);
+    
+    //don't shutdown on failure
+    if(ModuleManager_LoadModules(&modulelist, MODULEFILE)<0)
+        log_info("Couldn't load modules, check your module file and try reload!");
 
     //FileCache
     check(InitializeFileCache(&filecache, maxfiles, maxfilesize)==0, "InitializeFileCache failed");
-    commandline.filecache = &filecache;
 
     //create command handler
     check(pthread_create(&commandline.commandthreadID, &attr, handle_commandline, (void*)&commandline)==0, "pthread_create failed");
+
+    //add cmds to the command handler
+    //they are never unregistered because they are needed for the entire time the program runs
+    pthread_mutex_init(&serverstats.stats_mutex, NULL);
+    commandlineAPI_registerCMD(&commandline, "stats", "prints server stats", commandline_printServerStats, (void*)&serverstats);
+    commandlineAPI_registerCMD(&commandline, "reload", "reloads modules", commandline_reloadModules, (void*)&modulelist);
+    commandlineAPI_registerCMD(&commandline, "cache_stats", "prints cache stats", commandline_printCacheStats, (void*)&filecache);
+    commandlineAPI_registerCMD(&commandline, "cache_list", "lists cache content", commandline_printCacheList,  (void*)&filecache);
 
     log_info("Server was successfully started");
 
@@ -198,50 +201,51 @@ int main(int argc, char *argv[])
     {       
         errno = 0;
         newsockfd = accept(sockfd, (struct sockaddr *)&cli_addr, &clilen);
-	    check(newsockfd>=0, "accept failed");	
+            check(newsockfd>=0, "accept failed");       
 
-	    inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
+            inet_ntop(AF_INET, &cli_addr.sin_addr.s_addr, IP, 20);
 
-	    for(i=0; i<thread_num; i++)
-	    {
-	        if(threads[i].threadID==0)
-	        {
-		    threads[i].connection = newsockfd;
-		    threads[i].created = time(NULL);
-		    threads[i].last_active = time(NULL);
-		    threads[i].finished = &thread_finished;
-		    threads[i].mutex = &mutex_finished;
-		    threads[i].modulelist = &modulelist;
-		    stringcpy(threads[i].querry.IP, IP, 20);
-		    threads[i].querry.time = time(NULL);
-		    threads[i].commandline = &commandline;
-		    threads[i].querry.sessionlist = &sessionlist;
-		    threads[i].querry.filecache = &filecache;
+            for(i=0; i<thread_num; i++)
+            {
+                if(threads[i].threadID==0)
+                {
+                    threads[i].connection = newsockfd;
+                    threads[i].created = time(NULL);
+                    threads[i].last_active = time(NULL);
+                    threads[i].finished = &thread_finished;
+                    threads[i].mutex = &mutex_finished;
+                    threads[i].modulelist = &modulelist;
+                    stringcpy(threads[i].querry.IP, IP, 20);
+                    threads[i].querry.time = time(NULL);
+                    threads[i].commandline = &commandline;
+                    threads[i].serverstats = &serverstats;
+                    threads[i].querry.sessionlist = &sessionlist;
+                    threads[i].querry.filecache = &filecache;
                         
-		    check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
+                    check(pthread_create(&threads[i].threadID, &attr, handle_request, (void*)&threads[i])==0, "pthread_create failed");
 
-		    break;
-	        }
-	    }
-	    if(i==thread_num) //no open slots close the connection
-	    {
-	        log_warn("Request was dropped because maxthreads was reached");
-	        close(newsockfd);
-	    }
-  
+                    break;
+                }
+            }
+            if(i==thread_num) //no open slots close the connection
+            {
+                log_warn("Request was dropped because maxthreads was reached");
+                close(newsockfd);
+            }  
     }
 
     done = 0;
     while(!done)
     {
         sleep(1);
-        check(pthread_mutex_lock(&commandline.commandline_mutex)==0, "pthread_mutex_lock failed");
-        if(commandline.numthreads == 0)
+        check(pthread_mutex_lock(&serverstats.stats_mutex)==0, "pthread_mutex_lock failed");
+        if(serverstats.numthreads == 0)
             done = 1;
-        pthread_mutex_unlock(&commandline.commandline_mutex);
+        pthread_mutex_unlock(&serverstats.stats_mutex);
     }
 
-    pthread_mutex_destroy(&commandline.commandline_mutex);
+    pthread_mutex_destroy(&commandline.commandlist_mutex);
+    pthread_mutex_destroy(&serverstats.stats_mutex);
     pthread_mutex_destroy(&mutex_finished);
     pthread_cond_destroy(&thread_finished);
 
@@ -266,7 +270,8 @@ error:
     //ModuleManager_FreeModules(&modulelist);  
     //causes infinite loop
 
-    if (threads) free(threads);
+    if(threads)
+        free(threads);
 
     return 1;
 }
@@ -288,20 +293,22 @@ void *handle_request(void *arg)
     tobServ_response response;
     int connection;
     int i, state, code, newcode;
+    tobServ_thread *thread_data;
 
+    thread_data = arg; //cast
 
     //update num threads and peak threads
-    check(pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex)==0, "pthread_mutex_lock failed");
+    check(pthread_mutex_lock(&thread_data->serverstats->stats_mutex)==0, "pthread_mutex_lock failed");
 
-    ((tobServ_thread*)arg)->commandline->numthreads++;
-    ((tobServ_thread*)arg)->commandline->numrequests++;
+    thread_data->serverstats->numthreads++;
+    thread_data->serverstats->numrequests++;
 
-    if(((tobServ_thread*)arg)->commandline->peakthreads < ((tobServ_thread*)arg)->commandline->numthreads)
-        ((tobServ_thread*)arg)->commandline->peakthreads = ((tobServ_thread*)arg)->commandline->numthreads;
+    if(thread_data->serverstats->peakthreads < thread_data->serverstats->numthreads)
+        thread_data->serverstats->peakthreads = thread_data->serverstats->numthreads;
 
-    pthread_mutex_unlock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
+    pthread_mutex_unlock(&thread_data->serverstats->stats_mutex);
 
-    connection = ((tobServ_thread*)arg)->connection;
+    connection = thread_data->connection;
 
     request = get_header(connection, arg);
     
@@ -310,20 +317,20 @@ void *handle_request(void *arg)
         close(connection);
 
         //change commandline thread count
-        check(pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex)==0, "pthread_mutex_lock failed");
-        ((tobServ_thread*)arg)->commandline->numthreads--;
-        pthread_mutex_unlock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
+        check(pthread_mutex_lock(&thread_data->serverstats->stats_mutex)==0, "pthread_mutex_lock failed");
+        thread_data->serverstats->numthreads--;
+        pthread_mutex_unlock(&thread_data->serverstats->stats_mutex);
 
 
         //mark thread as finished
-        check(pthread_mutex_lock(((tobServ_thread*)arg)->mutex)==0, "pthread_mutex_lock failed");
-        pthread_cond_signal(((tobServ_thread*)arg)->finished);
-        ((tobServ_thread*)arg)->threadID = 0;
-        pthread_mutex_unlock(((tobServ_thread*)arg)->mutex);
+        check(pthread_mutex_lock(thread_data->mutex)==0, "pthread_mutex_lock failed");
+        pthread_cond_signal(thread_data->finished);
+        thread_data->threadID = 0;
+        pthread_mutex_unlock(thread_data->mutex);
 
         return 0;
     }
-    ((tobServ_thread*)arg)->querry.requestheader = &request;  
+    thread_data->querry.requestheader = &request;  
 
     pathclone = malloc(strlen(request.path)+1);
     check_mem(pathclone);
@@ -373,33 +380,33 @@ void *handle_request(void *arg)
         if(!strcmp(request.infos[i].name, "Cookie"))
             code = GetSessionCodeFromCookie(request.infos[i].value);
 
-    newcode = StartSession(((tobServ_thread*)arg)->querry.sessionlist, ((tobServ_thread*)arg)->querry.IP, code);
+    newcode = StartSession(thread_data->querry.sessionlist, ((tobServ_thread*)arg)->querry.IP, code);
 
     if(newcode==-1)
         newcode = code; //if still in db use old code
 
-    ((tobServ_thread*)arg)->querry.code = newcode;
-    stringcpy(((tobServ_thread*)arg)->querry.module, module, 128);
+    thread_data->querry.code = newcode;
+    stringcpy(thread_data->querry.module, module, 128);
 
-    pthread_rwlock_rdlock(&((tobServ_thread*)arg)->modulelist->lock);
+    pthread_rwlock_rdlock(&thread_data->modulelist->lock);
 
   
     if((!strcmp(request.method, "GET") || !strcmp(request.method, "POST")) && (pathclone[0] == '\0' || pathclone[0] == '/'))
     {
         // force www. redirect if no subdomain given
-        if ((request.host[0] > '9' || request.host[0] < '0') && (strncmp(request.host, "static.", 7) != 0 && strncmp(request.host, "www.", 4) != 0))
+        if ((request.host[0] > '9' || request.host[0] < '0') && (strncmp(request.host, "static.", 7) && strncmp(request.host, "www.", 4) ) )
         {
             char *firstocc, *lastocc;
             firstocc = strchr(request.host, '.');
             lastocc = strrchr(request.host, '.');
             if (firstocc == lastocc)  // doesnt work with TLDs like .co.nz
             {  
-                snprintf(buffer, 512, "http://www.%s%s", request.host, request.path);  
+                snprintf(buffer, sizeof(buffer), "http://www.%s%s", request.host, request.path);  
                 send_redirect(connection, buffer, 301);
             }  
             else
             {
-                snprintf(buffer, 512, "http://www.%s%s", firstocc+1, request.path); 
+                snprintf(buffer, sizeof(buffer), "http://www.%s%s", firstocc+1, request.path); 
                 send_redirect(connection, buffer, 302);
             }
         }
@@ -408,46 +415,44 @@ void *handle_request(void *arg)
             if (!strncmp(request.host, "static.", 7)) snprintf(buffer, 512, "%s", request.host + 7);  
             else if (!strncmp(request.host, "www.", 4)) snprintf(buffer, 512, "%s", request.host + 4); 
 
-            for(i=0; i<((tobServ_thread*)arg)->modulelist->count; i++)
+            for(i=0; i<thread_data->modulelist->count; i++)
             {
-                if(!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].host, buffer) || ((request.host[0] <= '9' && request.host[0] >= '0') && !strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module)))
+                if(!strcmp(thread_data->modulelist->modules[i].host, buffer) || ((request.host[0] <= '9' && request.host[0] >= '0') && !strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module)))
                 {
-                    if (!strcmp(((tobServ_thread*)arg)->modulelist->modules[i].host, buffer))
+                    if (!strcmp(thread_data->modulelist->modules[i].host, buffer))
                     {
                         if (strlen(request.path) > 1) action = request.path + 1;
                         else action = NULL;     
                     }
-		            //store module path		
-		            strcpy(((tobServ_thread*)arg)->querry.modulepath, ((tobServ_thread*)arg)->modulelist->modules[i].path);
-		        
-                    response = ((tobServ_thread*)arg)->modulelist->modules[i].querry_function(((tobServ_thread*)arg)->querry, action, ((tobServ_thread*)arg)->modulelist->modules[i].data);
+                            //store module path         
+                            strcpy(thread_data->querry.modulepath, thread_data->modulelist->modules[i].path);
+                        
+                    response = thread_data->modulelist->modules[i].querry_function(thread_data->querry, action, thread_data->modulelist->modules[i].data);
 
-		            pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
+                            pthread_rwlock_unlock(&thread_data->modulelist->lock);
 
 
                     if(!response.response || !response.type)
                     {
-                        snprintf(logger, 1024, "failed to get response of %s", ((tobServ_thread*)arg)->modulelist->modules[i].name);
-                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), ((tobServ_thread*)arg)->querry.code, 0, 500, response.nocookies);
+                        snprintf(logger, 1024, "failed to get response of %s", thread_data->modulelist->modules[i].name);
+                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), thread_data->querry.code, 0, 500, response.nocookies);
                     }
                     else
                     {
-                        send_response(connection, response.type, response.response, response.length, ((tobServ_thread*)arg)->querry.code, response.usecache, response.code, response.nocookies);
+                        send_response(connection, response.type, response.response, response.length, thread_data->querry.code, response.usecache, response.code, response.nocookies);
                         FreeResponse(response);
                     }
                     break;
                 }
             }
-            if(i==((tobServ_thread*)arg)->modulelist->count)
-                send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), ((tobServ_thread*)arg)->querry.code, 0, 404, 1);
+            if(i==thread_data->modulelist->count)
+                send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), thread_data->querry.code, 0, 404, 1);
         }
     }
     else
-        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), ((tobServ_thread*)arg)->querry.code, 0, 400, 1);
+        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), thread_data->querry.code, 0, 400, 1);
 
-    pthread_rwlock_unlock(&((tobServ_thread*)arg)->modulelist->lock);
-
-
+    pthread_rwlock_unlock(&thread_data->modulelist->lock);
 
     close(connection);
 
@@ -456,21 +461,19 @@ void *handle_request(void *arg)
     free(pathclone);
     pathclone = NULL;
 
-    pthread_mutex_lock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
+    pthread_mutex_lock(&thread_data->serverstats->stats_mutex);
 
-    ((tobServ_thread*)arg)->commandline->numthreads--;
+    thread_data->serverstats->numthreads--;
 
-    pthread_mutex_unlock(&((tobServ_thread*)arg)->commandline->commandline_mutex);
-
-
+    pthread_mutex_unlock(&thread_data->serverstats->stats_mutex);
 
 
-    pthread_mutex_lock(((tobServ_thread*)arg)->mutex);
+    pthread_mutex_lock(thread_data->mutex);
 
-    pthread_cond_signal(((tobServ_thread*)arg)->finished);
-    ((tobServ_thread*)arg)->threadID = 0;
+    pthread_cond_signal(thread_data->finished);
+    thread_data->threadID = 0;
 
-    pthread_mutex_unlock(((tobServ_thread*)arg)->mutex);
+    pthread_mutex_unlock(thread_data->mutex);
 
     return 0;
 
@@ -639,7 +642,7 @@ header get_header(int connection, tobServ_thread *arg)
             {
                 n = read(connection,buffer,255);
                 buffer[n] = '\0';
-		check(n>=0, "ERROR reading from socket");
+                check(n>=0, "ERROR reading from socket");
 
                 if((contentwritten+n)>contentlength)
                 {
@@ -679,8 +682,8 @@ header get_header(int connection, tobServ_thread *arg)
     if(!strcmp(result.method, "POST") && content)
     {
         result.numpostdata = explode(&lines, content, "&");
-	if(result.numpostdata)
-	    result.postdata = malloc(sizeof(tobServ_PostData)*result.numpostdata);
+        if(result.numpostdata)
+            result.postdata = malloc(sizeof(tobServ_PostData)*result.numpostdata);
 
         for(i=0; i<result.numpostdata; i++)
         {
@@ -724,22 +727,22 @@ header get_header(int connection, tobServ_thread *arg)
 
     if((getvarstring = strchr(result.path, '?')))
     {
-	getvarstring++;//skip the "?"
-	
-	num = result.numgetdata = explode(&lines, getvarstring, "&");
-	if(result.numgetdata)
-	    result.getdata = malloc(sizeof(tobServ_GetData)*result.numgetdata);
+        getvarstring++;//skip the "?"
+        
+        num = result.numgetdata = explode(&lines, getvarstring, "&");
+        if(result.numgetdata)
+            result.getdata = malloc(sizeof(tobServ_GetData)*result.numgetdata);
 
-	a=0;
-	for(i=0;i<num;i++)
-	{
-	    numwords = explode(&words, lines[i], "=");
+        a=0;
+        for(i=0;i<num;i++)
+        {
+            numwords = explode(&words, lines[i], "=");
 
             if(numwords!=2)
             {
-		//invalid get variable
+                //invalid get variable
                 result.numgetdata--;
-		result.getdata = realloc(result.getdata, sizeof(tobServ_GetData)*result.numgetdata);
+                result.getdata = realloc(result.getdata, sizeof(tobServ_GetData)*result.numgetdata);
             }
             else
             {
@@ -748,14 +751,14 @@ header get_header(int connection, tobServ_thread *arg)
                 result.getdata[a].value = malloc(sizeof(char)*(strlen(words[1])+1));
                 strcpy(result.getdata[a].value, words[1]);
                 urldecode(result.getdata[a].value);
-		a++;
+                a++;
             }
-	    free(words);
-	    words = NULL;
-	}
-	
-	free(lines);
-	lines = NULL;
+            free(words);
+            words = NULL;
+        }
+        
+        free(lines);
+        lines = NULL;
     }
 
     if(headerstring)
@@ -778,33 +781,33 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
     switch(code)
     {
     case 200:
-	status = "200 OK";
-	break;
+        status = "200 OK";
+        break;
     case 301:
     case 302:
-	send_redirect(connection, content, code);
-	return;
+        send_redirect(connection, content, code);
+        return;
     case 400:
-	status = "400 Bad Request";
-	break;
+        status = "400 Bad Request";
+        break;
     case 401:
-	status = "401 Unauthorized";
-	break;
+        status = "401 Unauthorized";
+        break;
     case 403:
-	status = "402 Forbidden";
-	break;
+        status = "402 Forbidden";
+        break;
     case 404:
-	status = "404 Not Found";
-	break;
+        status = "404 Not Found";
+        break;
     case 500:
     status = "500 Internal Server Error";
     break;
     case 503:
-	status = "503 Service Unavailable";
-	break;
+        status = "503 Service Unavailable";
+        break;
     case 451:
-	status = "451 Unavailable For Legal Reasons";
-	break;
+        status = "451 Unavailable For Legal Reasons";
+        break;
     }
     
     char headerstring[256];
@@ -813,9 +816,9 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
 
     headerstring[0] = '\0';
     if(usecache)
-	cache = "Cache-Control: max-age=10000\r\n";
+        cache = "Cache-Control: max-age=10000\r\n";
     else
-	cache = "";
+        cache = "";
 
     if (!nocookies)
         snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);   
@@ -917,75 +920,12 @@ int FreeHeader(header result)
     return 0;
 }
 
-void *handle_commandline(void *arg)
-{
-    char *command;
-    tobServ_commandline *commandline;
-
-    commandline = (tobServ_commandline*)arg;
-
-    while(1)
-    {
-        command = readline("> ");
-        add_history(command);
-
-        if(!strcmp(command, "help"))
-            printf("available commands:\nhelp - shows this message\nstats - show general server statistics\ncache stats - show cache statistics\ncache list - show current content of cache\nreload - reloads the modules\nexit/shutdown - shuts the server down\n");
-        else if(!strcmp(command, "shutdown") || !strcmp(command, "exit"))
-        {
-            printf("tobServ going to shutdown......");
-            free(command);
-            commandline->doshutdown = 1;
-            pthread_kill(commandline->mainthreadID, SIGTERM);
-            return 0;
-        }
-
-
-	    //the readings aren't thread safe but who cares. Read operations can't destroy anything
-        else if(!strcmp(command, "stats"))
-            printf("tobServ %s Current Status\nThreads: %i/%i PeakThreads: %i TotalRequests: %i\n", VERSION, commandline->numthreads, commandline->maxthreads, commandline->peakthreads, commandline->numrequests);
-	    else if(!strcmp(command, "cache stats"))
-	        printf("Cached Files: %i/%i with a total size of %iKB\n", commandline->filecache->numfiles, commandline->filecache->maxfiles, GetTotalFileCacheSize(commandline->filecache)/1024);
-
-	    else if(!strcmp(command, "cache list"))
-	        commandline_printCacheList(commandline->filecache);
-	    else if(!strcmp(command, "reload"))
-	    {
-            printf("tobServ going to reload modules....\n");
-	        ModuleManager_FreeModules(commandline->modulelist);
-	        if(ModuleManager_LoadModules(commandline->modulelist, MODULEFILE) < 0)
-		    printf("Loading modules failed\n");
-	        else
-		    printf("%i Modules were successfully loaded\n", commandline->modulelist->count);		
-	    }
-
-        free(command);
-    }
-    return 0;
-}
-
-void commandline_printCacheList(tobServ_FileCache *filecache)
-{
-    unsigned int i, currenttime;
-
-    currenttime = time(NULL);    
-
-    printf("%-50s%-10s%-20s%-5s\n", "Path", "Size", "LastAccess in s", "usecount"); 
-
-    pthread_rwlock_rdlock(&filecache->lock);
-    for(i=0;i<filecache->numfiles;i++)
-    {
-	printf("\n%-50s%-10i%-20i%-5i", filecache->files[i].path, filecache->files[i].file->size, currenttime-filecache->files[i].lastaccess, filecache->files[i].usecount);
-    }
-    pthread_rwlock_unlock(&filecache->lock);
-
-    if(i>0) //new line for the next cmd
-	printf("\n");
-}
-
 int FreeSessions(tobServ_SessionList *sessionlist)
 {
     int i;
+
+    if(!sessionlist->initialized) //nothing todo
+        return 0;
 
     pthread_mutex_lock(sessionlist->mutex_session);
 
@@ -1001,6 +941,8 @@ int FreeSessions(tobServ_SessionList *sessionlist)
     sessionlist->num = 0;
 
     pthread_mutex_unlock(sessionlist->mutex_session);
+
+    sessionlist->initialized = 0;
 
     return 0;
 }
@@ -1123,8 +1065,8 @@ char *urldecode(char *input)
              input[a]=replacechar;
              i+=2;
          }
-	 else if(input[i]=='+')
-	     input[a] = ' ';
+         else if(input[i]=='+')
+             input[a] = ' ';
          else if(a < i)
              input[a]=input[i];
 

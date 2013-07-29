@@ -30,6 +30,7 @@ typedef struct _tobServ_SessionList
     uint32_t num;
     tobServ_Session *sessions;
     pthread_mutex_t *mutex_session;
+    int32_t initialized;
 } tobServ_SessionList;
 
 //0 on success <0 on failure
