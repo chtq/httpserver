@@ -19,7 +19,7 @@ typedef struct _tobServ_SessionVariable
 typedef struct _tobServ_Session
 {
     char IP[20];
-    uint32_t code;
+    uint64_t code;
     uint32_t num;
     uint32_t expire;
     tobServ_SessionVariable *variables;
@@ -33,12 +33,19 @@ typedef struct _tobServ_SessionList
     int32_t initialized;
 } tobServ_SessionList;
 
-//0 on success <0 on failure
+//returns 0 on success <0 on failure
 int32_t SetSessionVariable(tobServ_Querry *querry, char *name, char *value);
 
+//returns the corresponding value for name
+//returns NULL on failure
 char *GetSessionVariable(tobServ_Querry *querry, char *name);
 
-//0 if not set, 1 if set
+//returns 0 if not set, 1 if set
 uint32_t IsSessionVariableSet(tobServ_Querry *querry, char *name);
+
+//returns a pointer to the searched Session or NULL if not found
+//uses log search
+//IMPORTANT: SESSIONLIST MUST BE LOCKED using its own mutex before this function is called to ensure that no shit happens
+tobServ_Session *GetSession(tobServ_SessionList *sessionlist, uint64_t code, char *IP);
 
 #endif

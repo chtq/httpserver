@@ -1,6 +1,5 @@
 #include "ModuleManager.h"
 #include "commandline.h"
-#include "logger.h"
 #include "dbg.h"
 
 #include <pthread.h>

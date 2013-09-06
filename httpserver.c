@@ -947,18 +947,19 @@ int FreeSessions(tobServ_SessionList *sessionlist)
     return 0;
 }
 
-int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint32_t code) //-1 already exists else new code returned
+int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) //-1 already exists else new code returned
 {
-    int i, a, newcode;
+    uint32_t i, a, left, right, position;
+    uint64_t newcode;
 
-    int newnum, currenttime;
+    uint32_t newnum, currenttime;
     tobServ_Session *newsessions;
 
-    newcode = rand();
     currenttime = time(NULL);
 
     pthread_mutex_lock(sessionlist->mutex_session);
 
+    //if other sessions exist already check for expired ones
     if(sessionlist->sessions)
     {
         newnum = sessionlist->num;
@@ -975,7 +976,7 @@ int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint32_t code) 
             sessionlist->sessions = NULL;
             sessionlist->num = 0;
         }
-        else
+        else if(newnum != sessionlist->num) //only recreate if something needs to be changed
         {
             newsessions = malloc(sizeof(tobServ_Session)*newnum);
 
@@ -997,6 +998,63 @@ int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint32_t code) 
             sessionlist->sessions = newsessions;
             sessionlist->num = newnum;
         }
+    }
+
+    //search for the correct position
+    left = 0;
+    right = sessionlist->num-1;
+
+    while(right >= left)
+    {
+        //get the middle
+        i = (left + right) / 2;
+
+        if(sessionlist->sessions[i].code < code)
+            left = i+1;
+        else if(sessionlist->sessions[i].code > code)
+            right = i-1;
+        else //equal
+            break;
+    }
+
+    if(right >= left) //exists
+    {
+        check(!strcmp(sessionlist[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
+        
+        sessionlist->sessions[i].expire = time(NULL)+10000;
+        pthread_mutex_unlock(sessionlist->mutex_session);
+        return -1;
+    }
+    else //doesn't exist yet
+    {
+        //add a new session        
+        newcode = rand() * RAND_MAX + rand();
+        
+        if(code > right)
+        {
+            position = left;
+        }
+        else
+        {
+            position = right;
+        }
+
+        sessionlist->sessions = realloc(sessionlist->sessions, sessionlist->num+1);
+        sessionlist->num++;
+
+        //move all start from the back
+        for(i=sessionlist->num-2;i>=position;i--)
+        {
+            sessionlist->sessions[i+1] = sessionlist->sessions[i];
+        }
+
+        //add
+        stringcpy(sessionlist->sessions[position].IP, IP, 20);
+        sessionlist->sessions[position].code = newcode;
+        sessionlist->sessions[position].num = 0;
+        sessionlist->sessions[p].expire = time(NULL)+10000;
+        sessionlist->sessions[sessionlist->num].variables = NULL;
+        
     }
 
     for(i=0; i<sessionlist->num; i++)
