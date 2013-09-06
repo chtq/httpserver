@@ -949,7 +949,8 @@ int FreeSessions(tobServ_SessionList *sessionlist)
 
 int64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) //-1 already exists else new code returned
 {
-    uint32_t i, a, left, right, position;
+    uint32_t i, a, position;
+    int64_t left, right;
     uint64_t newcode;
 
     uint32_t newnum, currenttime;
@@ -1000,62 +1001,73 @@ int64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) 
         }
     }
 
-    //search for the correct position
-    left = 0;
-    right = sessionlist->num-1;
-
-    while(right >= left)
+    //empty?
+    if(!sessionlist->num)
     {
-        //get the middle
-        i = (left + right) / 2;
-
-        if(sessionlist->sessions[i].code < code)
-            left = i+1;
-        else if(sessionlist->sessions[i].code > code)
-            right = i-1;
-        else //equal
-            break;
+        position = 0; //write new session at the very first position
     }
+    else //get the correct position
+    {
 
-    if(right >= left) //exists
-    {
-        check(!strcmp(sessionlist->sessions[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
-        
-        sessionlist->sessions[i].expire = time(NULL)+10000;
-        pthread_mutex_unlock(sessionlist->mutex_session);
-        return -1;
-    }
-    else //doesn't exist yet
-    {
-        //add a new session        
-        newcode = rand() * RAND_MAX + rand();
-        
-        if(code > right)
+        //search for the correct position
+        left = 0;
+        right = sessionlist->num-1;
+
+        while(right >= left)
         {
-            position = left;
-        }
-        else
-        {
-            position = right;
+            //get the middle
+            i = (left + right) / 2;
+
+            if(sessionlist->sessions[i].code < code)
+                left = i+1;
+            else if(sessionlist->sessions[i].code > code)
+                right = i-1;
+            else //equal
+                break;
         }
 
-        sessionlist->sessions = realloc(sessionlist->sessions, sessionlist->num+1);
-        sessionlist->num++;
+        if(right >= left) //exists
+        {
+            check(!strcmp(sessionlist->sessions[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
+        
+            sessionlist->sessions[i].expire = time(NULL)+10000;
+            pthread_mutex_unlock(sessionlist->mutex_session);
+            return -1;
+        }
+        else //doesn't exist yet
+        {
+            //add a new session        
+            newcode = rand() * RAND_MAX + rand();
+        
+            if(code > right)
+            {
+                position = left;
+            }
+            else
+            {
+                position = right;
+            }        
+        }
+    }
 
-        //move all start from the back
+    sessionlist->sessions = realloc(sessionlist->sessions, (sessionlist->num+1)*sizeof(tobServ_Session));
+    sessionlist->num++;
+
+    //move all if some already exist start from the back
+    if(sessionlist->num>1)
+    {
         for(i=sessionlist->num-2;i>=position;i--)
         {
             sessionlist->sessions[i+1] = sessionlist->sessions[i];
         }
-
-        //add
-        stringcpy(sessionlist->sessions[position].IP, IP, 20);
-        sessionlist->sessions[position].code = newcode;
-        sessionlist->sessions[position].num = 0;
-        sessionlist->sessions[position].expire = time(NULL)+10000;
-        sessionlist->sessions[position].variables = NULL;
-        
     }
+
+    //add
+    stringcpy(sessionlist->sessions[position].IP, IP, 20);
+    sessionlist->sessions[position].code = newcode;
+    sessionlist->sessions[position].num = 0;
+    sessionlist->sessions[position].expire = time(NULL)+10000;
+    sessionlist->sessions[position].variables = NULL;
 
     for(i=0; i<sessionlist->num; i++)
     {
