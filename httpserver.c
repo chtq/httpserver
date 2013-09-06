@@ -50,7 +50,7 @@ int32_t FreeResult(header result);
 void main_shutdown_handler(int32_t);
 int32_t FreeHeader(header);
 int32_t FreeSessions(tobServ_SessionList*);
-int32_t StartSession(tobServ_SessionList*, char*, uint32_t);
+int64_t StartSession(tobServ_SessionList*, char*, uint64_t);
 int32_t GetSessionCodeFromCookie(char*);
 char *urldecode(char*);
 
@@ -947,7 +947,7 @@ int FreeSessions(tobServ_SessionList *sessionlist)
     return 0;
 }
 
-int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) //-1 already exists else new code returned
+int64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) //-1 already exists else new code returned
 {
     uint32_t i, a, left, right, position;
     uint64_t newcode;
@@ -1019,7 +1019,7 @@ int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) 
 
     if(right >= left) //exists
     {
-        check(!strcmp(sessionlist[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
+        check(!strcmp(sessionlist->sessions[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
         
         sessionlist->sessions[i].expire = time(NULL)+10000;
         pthread_mutex_unlock(sessionlist->mutex_session);
@@ -1052,8 +1052,8 @@ int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) 
         stringcpy(sessionlist->sessions[position].IP, IP, 20);
         sessionlist->sessions[position].code = newcode;
         sessionlist->sessions[position].num = 0;
-        sessionlist->sessions[p].expire = time(NULL)+10000;
-        sessionlist->sessions[sessionlist->num].variables = NULL;
+        sessionlist->sessions[position].expire = time(NULL)+10000;
+        sessionlist->sessions[position].variables = NULL;
         
     }
 
@@ -1079,6 +1079,9 @@ int32_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) 
     pthread_mutex_unlock(sessionlist->mutex_session);
 
     return newcode;
+
+error:
+    return -1;
 }
 
 int GetSessionCodeFromCookie(char *cookiestring)
