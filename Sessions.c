@@ -8,7 +8,7 @@
 
 tobServ_Session *GetSession(tobServ_SessionList *sessionlist, uint64_t code, char *IP)
 {
-    uint32_t i, a, left, right;
+    uint32_t i, left, right;
 
     //search for the correct session using a log search
     left = 0;
@@ -29,9 +29,9 @@ tobServ_Session *GetSession(tobServ_SessionList *sessionlist, uint64_t code, cha
 
     check(right >=left, "No session exists for the query");
 
-    check(!strcmp(sessionlist[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
+    check(!strcmp(sessionlist->sessions[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
 
-    return sessionlist[i];
+    return &sessionlist->sessions[i];
 
 error:
     return NULL;
@@ -40,6 +40,7 @@ error:
 int32_t SetSessionVariable(tobServ_Querry *querry, char *name, char *value)
 {
     tobServ_Session *session;
+    uint32_t a;
 
     pthread_mutex_lock(querry->sessionlist->mutex_session);
 
@@ -51,7 +52,7 @@ int32_t SetSessionVariable(tobServ_Querry *querry, char *name, char *value)
     //TODO?: ITS A LINEAR SEARCH UPGRADE IF NEEDED BUT NORMALLY THERE SHOULDN'T BE MUCH VARS PER SESSION
     for(a=0;a<session->num;a++)
     {
-        if(!session->variables[a].name, name) && !strcmp(sessions->variables[a].module, querry->module))
+        if(!strcmp(session->variables[a].name, name) && !strcmp(session->variables[a].module, querry->module))
             break;
     }
 
@@ -80,33 +81,30 @@ error:
 
 char *GetSessionVariable(tobServ_Querry *querry, char *name)
 {
-    uint32_t i,a, length;
+    uint32_t a, length;
     char *result;
+    tobServ_Session *session;
 
     pthread_mutex_lock(querry->sessionlist->mutex_session);
 
-    for(i=0;i<querry->sessionlist->num;i++)
+    session = GetSession(querry->sessionlist, querry->code, querry->IP);
+
+    check(session, "Session for code %i does not exists", querry->code);
+
+    for(a=0;a<session->num;a++)
     {
-        if( (querry->sessionlist->sessions[i].code==querry->code) && (!strcmp(querry->sessionlist->sessions[i].IP, querry->IP)))
+        if(!strcmp(session->variables[a].name, name) && !strcmp(session->variables[a].module, querry->module))
             break;
     }
 
-    check(querry->sessionlist->num > i, "No session exists for the query");
+    check(session->num != a, "GetSessionVariable was called for %s but it doesn't exist. Use IsSessionVariableSet", name);
 
-    for(a=0;a<querry->sessionlist->sessions[i].num;a++)
-    {
-        if(!strcmp(querry->sessionlist->sessions[i].variables[a].name, name) && !strcmp(querry->sessionlist->sessions[i].variables[a].module, querry->module))
-            break;
-    }
-
-    check(querry->sessionlist->sessions[i].num != a, "GetSessionVariable was called for %s but it doesn't exist. Use IsSessionVariableSet", name);
-
-    length = strlen(querry->sessionlist->sessions[i].variables[a].value) + 1;
+    length = strlen(session->variables[a].value) + 1;
 
     result = malloc(length);
     check_mem(result);
 
-    stringcpy(result, querry->sessionlist->sessions[i].variables[a].value, length);
+    stringcpy(result, session->variables[a].value, length);
 
     pthread_mutex_unlock(querry->sessionlist->mutex_session);
 
@@ -120,25 +118,29 @@ error:
 
 uint32_t IsSessionVariableSet(tobServ_Querry *querry, char *name)
 {
-    uint32_t i, a;
+    uint32_t a;
+    tobServ_Session *session;
 
-    for(i=0;i<querry->sessionlist->num;i++)
-        if( (querry->sessionlist->sessions[i].code==querry->code) && (!strcmp(querry->sessionlist->sessions[i].IP, querry->IP)))
-            break;
+    pthread_mutex_lock(querry->sessionlist->mutex_session);
 
-    check(querry->sessionlist->num > i, "No session exists for the query");
+    session = GetSession(querry->sessionlist, querry->code, querry->IP);
 
-    for(i=0;a<querry->sessionlist->sessions[a].num;a++)
+    check(session, "No session exists for the code %i", querry->code);
+
+    for(a=0;a<session->num;a++)
     {
-        if(!strcmp(querry->sessionlist->sessions[i].variables[a].name, name) && !strcmp(querry->sessionlist->sessions[i].variables[a].module, querry->module))
+        if(!strcmp(session->variables[a].name, name) && !strcmp(session->variables[a].module, querry->module))
             break;
     }
 
-    if(a==querry->sessionlist->sessions[i].num)//not found
+    if(a==session->num)//not found
         return 0;
+
+    pthread_mutex_unlock(querry->sessionlist->mutex_session);
 
     return 1;//found
 
 error:
+    pthread_mutex_unlock(querry->sessionlist->mutex_session);
     return 0; //nothing happens deal like it wasn't found. Error was thrown though because not finding the session in the list is an issue that shouldn't occur
 }
