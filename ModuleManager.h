@@ -15,6 +15,7 @@ typedef struct _tobServ_module
     char name[MODULEMANAGER_LASTERROR_SIZE];
     char path[MODULEMANAGER_NAME_SIZE];
     char host[MODULEMANAGER_HOST_SIZE];
+    int32_t noip;
     void *handle;
 
     void *data;

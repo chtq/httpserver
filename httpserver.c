@@ -50,8 +50,10 @@ int32_t FreeResult(header result);
 void main_shutdown_handler(int32_t);
 int32_t FreeHeader(header);
 int32_t FreeSessions(tobServ_SessionList*);
-int64_t StartSession(tobServ_SessionList*, char*, uint64_t);
-int32_t GetSessionCodeFromCookie(char*);
+uint64_t StartSession(tobServ_SessionList*, char*, uint64_t);
+uint32_t BSearchSession(uint64_t code, tobServ_SessionList *sessionlist);
+uint32_t BSearchNewSession(uint64_t code, tobServ_SessionList *sessionlist);
+uint64_t GetSessionCodeFromCookie(char*);
 char *urldecode(char*);
 
 int main(int argc, char *argv[])
@@ -292,7 +294,9 @@ void *handle_request(void *arg)
     char *pathclone = NULL;
     tobServ_response response;
     int connection;
-    int i, state, code, newcode;
+    int i, state;
+    uint64_t code;
+
     tobServ_thread *thread_data;
 
     thread_data = arg; //cast
@@ -339,13 +343,14 @@ void *handle_request(void *arg)
 
     //access logger currently deactivated for write_log beeing disabled
     /* access logger
-    time_t rawtime;
-    time(&rawtime);
+    
     char log[512];
-    snprintf(log, sizeof(log), "%.24s %s %s %s %s", ctime(&rawtime), ((tobServ_thread*)arg)->querry.IP, request.method, request.host, request.path);
+    
     write_log("access.log", log);
     */
-
+    time_t rawtime;
+    time(&rawtime);
+    printf("%.24s %s %s %s %s\n", ctime(&rawtime), ((tobServ_thread*)arg)->querry.IP, request.method, request.host, request.path);
 
     //separate module and action
     module = pathclone+1;
@@ -375,26 +380,29 @@ void *handle_request(void *arg)
     if(length==0)
         module = "default";
 
-    code = -1;
-    for(i=0; i<request.numinfos; i++)
-        if(!strcmp(request.infos[i].name, "Cookie"))
-            code = GetSessionCodeFromCookie(request.infos[i].value);
-
-    newcode = StartSession(thread_data->querry.sessionlist, ((tobServ_thread*)arg)->querry.IP, code);
-
-    if(newcode==-1)
-        newcode = code; //if still in db use old code
-
-    thread_data->querry.code = newcode;
     stringcpy(thread_data->querry.module, module, 128);
+
+    code = 0;
+    if (strncmp(request.host, "static.", 7) != 0) // static requests do not send cookies
+    {
+        for(i=0; i<request.numinfos; i++)
+            if(!strcmp(request.infos[i].name, "Cookie"))
+                code = GetSessionCodeFromCookie(request.infos[i].value);
+
+
+        code = StartSession(thread_data->querry.sessionlist, ((tobServ_thread*)arg)->querry.IP, code);
+    }
+             
+    log_info("code: %llu", code);
+  
+    thread_data->querry.code = code;
 
     pthread_rwlock_rdlock(&thread_data->modulelist->lock);
 
-  
     if((!strcmp(request.method, "GET") || !strcmp(request.method, "POST")) && (pathclone[0] == '\0' || pathclone[0] == '/'))
     {
-        // force www. redirect if no subdomain given
-        if ((request.host[0] > '9' || request.host[0] < '0') && (strncmp(request.host, "static.", 7) && strncmp(request.host, "www.", 4) ) )
+        // force www. redirect if no subdomain given 
+        if ((request.host[0] > '9' || request.host[0] < '0') && (strncmp(request.host, "static.", 7) && strncmp(request.host, "www.", 4)))
         {
             char *firstocc, *lastocc;
             firstocc = strchr(request.host, '.');
@@ -407,7 +415,7 @@ void *handle_request(void *arg)
             else
             {
                 snprintf(buffer, sizeof(buffer), "http://www.%s%s", firstocc+1, request.path); 
-                send_redirect(connection, buffer, 302);
+                send_redirect(connection, buffer, 301);
             }
         }
         else 
@@ -419,38 +427,48 @@ void *handle_request(void *arg)
             {
                 if(!strcmp(thread_data->modulelist->modules[i].host, buffer) || ((request.host[0] <= '9' && request.host[0] >= '0') && !strcmp(((tobServ_thread*)arg)->modulelist->modules[i].name, module)))
                 {
+                    if (request.host[0] <= '9' && request.host[0] >= '0' && thread_data->modulelist->modules[i].noip == 1)
+                    {
+                        snprintf(buffer, sizeof(buffer), "http://www.%s", thread_data->modulelist->modules[i].host);  
+                        send_redirect(connection, buffer, 301);
+                        break;
+                    }
+
+
                     if (!strcmp(thread_data->modulelist->modules[i].host, buffer))
                     {
                         if (strlen(request.path) > 1) action = request.path + 1;
                         else action = NULL;     
                     }
-                            //store module path         
-                            strcpy(thread_data->querry.modulepath, thread_data->modulelist->modules[i].path);
-                        
+
+                    //store module path         
+                    strcpy(thread_data->querry.modulepath, thread_data->modulelist->modules[i].path);
+                                
                     response = thread_data->modulelist->modules[i].querry_function(thread_data->querry, action, thread_data->modulelist->modules[i].data);
+               
+                    //pthread_rwlock_unlock(&thread_data->modulelist->lock);
 
-                            pthread_rwlock_unlock(&thread_data->modulelist->lock);
-
-
+                
                     if(!response.response || !response.type)
                     {
                         snprintf(logger, 1024, "failed to get response of %s", thread_data->modulelist->modules[i].name);
-                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), thread_data->querry.code, 0, 500, response.nocookies);
+                        send_response(connection, "text/html", "500 - Internal Server Error", strlen("500 - Internal Server Error"), 0, 0, 500, response.nocookies);
                     }
                     else
                     {
                         send_response(connection, response.type, response.response, response.length, thread_data->querry.code, response.usecache, response.code, response.nocookies);
                         FreeResponse(response);
                     }
+                
                     break;
                 }
             }
             if(i==thread_data->modulelist->count)
-                send_response(connection, "text/html", "tobServ 404", strlen("tobServ 404"), thread_data->querry.code, 0, 404, 1);
+                send_response(connection, "text/html", "404 - File Not Found", strlen("404 - File Not Found"), 0, 0, 404, 1);
         }
     }
     else
-        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), thread_data->querry.code, 0, 400, 1);
+        send_response(connection, "text/html", "400 - Bad Request", strlen("400 - Bad Request"), 0, 0, 400, 1);
 
     pthread_rwlock_unlock(&thread_data->modulelist->lock);
 
@@ -821,10 +839,10 @@ void send_response(int32_t connection, char *type, char *content, uint32_t size,
         cache = "";
 
     if (!nocookies)
-        snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; Max-Age=10000; Version=\"1\"\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);   
+        snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\nSet-Cookie: session=%i; Path=/; HttpOnly\r\n%sContent-Length: %i\r\nContent-Language: en\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, sessioncode, cache, size, type);   
 
     else
-        snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\n%sContent-Length: %i\r\nContent-Language: de\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, cache, size, type); 
+        snprintf(headerstring, 256, "HTTP/1.1 %s\r\nServer: tobServ V%s\r\n%sContent-Length: %i\r\nContent-Type: %s\nConnection: close\r\n\r\n", status, VERSION, cache, size, type); 
 
     write(connection,headerstring,strlen(headerstring));
 
@@ -947,35 +965,33 @@ int FreeSessions(tobServ_SessionList *sessionlist)
     return 0;
 }
 
-int64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) //-1 already exists else new code returned
+uint64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code)
 {
-    uint32_t i, a, position;
-    int64_t left, right;
+    uint32_t i, a, position, newnum, currenttime;
     uint64_t newcode;
 
-    uint32_t newnum, currenttime;
     tobServ_Session *newsessions;
 
     currenttime = time(NULL);
-
     pthread_mutex_lock(sessionlist->mutex_session);
 
-    //if other sessions exist already check for expired ones
-    if(sessionlist->sessions)
+    // any sessions already open?
+    if (sessionlist->num > 0)
     {
+        // let's check for any expired sessions
         newnum = sessionlist->num;
         for(i=0; i<sessionlist->num; i++)
         {
             if(sessionlist->sessions[i].expire<currenttime)
                 newnum--;
         }
-
-        //if all sessions expired then null the session list
-        if(!newnum)
+        
+        if(!newnum) //if all sessions expired then null the session list and force a new session at the very first position
         {
             free(sessionlist->sessions);
             sessionlist->sessions = NULL;
             sessionlist->num = 0;
+            code = 0;
         }
         else if(newnum != sessionlist->num) //only recreate if something needs to be changed
         {
@@ -999,104 +1015,121 @@ int64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) 
             sessionlist->sessions = newsessions;
             sessionlist->num = newnum;
         }
+
+        // search for the position if there are open sessions
+        if (sessionlist->num > 0) 
+        {
+            position = BSearchSession(code, sessionlist);
+            if (position != 0)  //session already exists
+            {
+                check(!strcmp(sessionlist->sessions[position].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
+            
+                sessionlist->sessions[position].expire = time(NULL)+10800;
+                pthread_mutex_unlock(sessionlist->mutex_session);
+                return code;
+            }
+            code = 0;
+
+        }
+
+    }
+    else // no active sessions - force new session and discard the current
+        code = 0;
+    
+    if (code == 0)   // add new session
+    {
+        newcode = rand() * RAND_MAX + rand();
+        position = BSearchNewSession(newcode, sessionlist);
+        sessionlist->num++;
+        if(sessionlist->sessions)
+        {
+            sessionlist->sessions = realloc(sessionlist->sessions, (sessionlist->num)*sizeof(tobServ_Session));
+        }
+        else
+        {
+            sessionlist->sessions = malloc((sessionlist->num)*sizeof(tobServ_Session));
+        }
+
+        //move all if some already exist start from the back
+        if(sessionlist->num>1)
+        {
+            for(i = sessionlist->num - 2; i >= position ;i--)
+            {
+                sessionlist->sessions[i+1] = sessionlist->sessions[i];
+                if (position == i) break; // protection against integer overflow
+            }
+        }
+
+        //add
+        stringcpy(sessionlist->sessions[position].IP, IP, 20);
+        sessionlist->sessions[position].code = newcode;
+        sessionlist->sessions[position].num = 0;
+        sessionlist->sessions[position].expire = time(NULL)+10800;
+        sessionlist->sessions[position].variables = NULL;
+
+        pthread_mutex_unlock(sessionlist->mutex_session);
+
+        return newcode;
     }
 
-    //empty?
-    if(!sessionlist->num)
-    {
-        position = 0; //write new session at the very first position
-    }
-    else //get the correct position
-    {
+    sentinel("this should be impossible");
 
-        //search for the correct position
+error:
+    return 0;
+}
+
+uint32_t BSearchSession(uint64_t code, tobServ_SessionList *sessionlist)
+{
+    int64_t i, left, right;
+    if (sessionlist->num > 0)
+    {
         left = 0;
         right = sessionlist->num-1;
 
-        while(right >= left)
+        while(left <= right)
         {
-            //get the middle
-            i = (left + right) / 2;
-
-            if(sessionlist->sessions[i].code < code)
-                left = i+1;
-            else if(sessionlist->sessions[i].code > code)
-                right = i-1;
-            else //equal
-                break;
-        }
-
-        if(right >= left) //exists
-        {
-            check(!strcmp(sessionlist->sessions[i].IP, IP), "Codes match but IPs don't. Reason could be a poor random function, IP switch of the user or someone trying to steal someones identity using his cookie");
-        
-            sessionlist->sessions[i].expire = time(NULL)+10000;
-            pthread_mutex_unlock(sessionlist->mutex_session);
-            return -1;
-        }
-        else //doesn't exist yet
-        {
-            //add a new session        
-            newcode = rand() * RAND_MAX + rand();
-        
-            if(code > right)
+            i = left + ((right - left) / 2);
+            if(sessionlist->sessions[i].code != code)
             {
-                position = left;
+                if (sessionlist->sessions[i].code > code)
+                    right = i - 1;     
+                else 
+                    left = i+ 1;   
             }
             else
             {
-                position = right;
-            }        
+                return (unsigned)i;
+            }
         }
     }
 
-    sessionlist->sessions = realloc(sessionlist->sessions, (sessionlist->num+1)*sizeof(tobServ_Session));
-    sessionlist->num++;
-
-    //move all if some already exist start from the back
-    if(sessionlist->num>1)
-    {
-        for(i=sessionlist->num-2;i>=position;i--)
-        {
-            sessionlist->sessions[i+1] = sessionlist->sessions[i];
-        }
-    }
-
-    //add
-    stringcpy(sessionlist->sessions[position].IP, IP, 20);
-    sessionlist->sessions[position].code = newcode;
-    sessionlist->sessions[position].num = 0;
-    sessionlist->sessions[position].expire = time(NULL)+10000;
-    sessionlist->sessions[position].variables = NULL;
-
-    for(i=0; i<sessionlist->num; i++)
-    {
-        if(!strcmp(sessionlist->sessions[i].IP, IP) && sessionlist->sessions[i].code==code)
-        {
-            sessionlist->sessions[i].expire = time(NULL)+10000;
-            pthread_mutex_unlock(sessionlist->mutex_session);
-            return -1;
-        }
-    }
-    sessionlist->sessions = realloc(sessionlist->sessions, sizeof(tobServ_Session)*(sessionlist->num+1));
-
-    stringcpy(sessionlist->sessions[sessionlist->num].IP, IP, 20);
-    sessionlist->sessions[sessionlist->num].code = newcode;
-    sessionlist->sessions[sessionlist->num].num = 0;
-    sessionlist->sessions[sessionlist->num].expire = time(NULL)+10000;
-    sessionlist->sessions[sessionlist->num].variables = NULL;
-
-    sessionlist->num++;
-
-    pthread_mutex_unlock(sessionlist->mutex_session);
-
-    return newcode;
-
-error:
-    return -1;
+    return 0;
 }
 
-int GetSessionCodeFromCookie(char *cookiestring)
+uint32_t BSearchNewSession(uint64_t code, tobServ_SessionList *sessionlist)
+{
+    int64_t left, right; uint64_t i;
+    if (sessionlist->num > 0)
+    {
+        left = 0;
+        right = sessionlist->num-1;
+        i = left + ((right - left) / 2);
+        if (sessionlist->sessions[i].code > code)
+            right = i;    
+
+        while(right > 0 && code < sessionlist->sessions[right].code)
+        {
+            i = right;
+            right--;
+        }
+        
+        return i;
+    }
+
+    return 0;
+}
+
+uint64_t GetSessionCodeFromCookie(char *cookiestring)
 {
     char **cookies;
     int num, i, code;
@@ -1115,7 +1148,7 @@ int GetSessionCodeFromCookie(char *cookiestring)
 
     if(cookies)
         free(cookies);
-    return -1;
+    return 0;
 }
 
 char *urldecode(char *input)
