@@ -1105,11 +1105,6 @@ uint32_t BSearchSession(uint64_t code, tobServ_SessionList *sessionlist)
     return 0;
 }
 
-<<<<<<< HEAD
-    pthread_mutex_unlock(sessionlist->mutex_session);
-
-    return newcode;
-=======
 uint32_t BSearchNewSession(uint64_t code, tobServ_SessionList *sessionlist)
 {
     int64_t left, right; uint64_t i;
@@ -1129,7 +1124,6 @@ uint32_t BSearchNewSession(uint64_t code, tobServ_SessionList *sessionlist)
         
         return i;
     }
->>>>>>> 3e349e7e3aa3ad8eb27b27687e5aa3eba237673f
 
     return 0;
 }
