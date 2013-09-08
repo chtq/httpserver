@@ -6,6 +6,7 @@
 #include <tobCONF.h>
 #include <dlfcn.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 int32_t ModuleManager_Initialize(tobServ_modulelist *modulelist, tobServ_commandline *commandline)
 {
@@ -28,6 +29,7 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
     char *modulepath=NULL;
     char *errorstring=NULL;
     char *host=NULL;
+    char *noip=NULL;
     tobCONF_File modulefile;
     tobCONF_Section *configsection;
 
@@ -51,8 +53,9 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
 	    name = tobCONF_GetElement(configsection, "name");
 	    modulepath = tobCONF_GetElement(configsection, "path");
 	    host = tobCONF_GetElement(configsection, "host");
+        noip = tobCONF_GetElement(configsection, "noip");
 
-	    check(name && path && host, "loading module section %s failed: fields missing", tobCONF_GetSectionName(configsection));
+	    check(name && path && host && noip, "loading module section %s failed: fields missing", tobCONF_GetSectionName(configsection));
 
 	    modulelist->count++;
 	    modulelist->modules = realloc(modulelist->modules, sizeof(tobServ_module)*modulelist->count);
@@ -61,6 +64,7 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
 	    stringcpy(modulelist->modules[modulelist->count-1].name, name, sizeof(modulelist->modules[modulelist->count-1].name));
 	    stringcpy(modulelist->modules[modulelist->count-1].path, modulepath, sizeof(modulelist->modules[modulelist->count-1].path));
 	    stringcpy(modulelist->modules[modulelist->count-1].host, host, sizeof(modulelist->modules[modulelist->count-1].host));
+        modulelist->modules[modulelist->count-1].noip = atoi(noip);
 
 	} while((configsection = tobCONF_GetNextSection(&modulefile)));
     }
@@ -74,26 +78,26 @@ int32_t ModuleManager_LoadModules(tobServ_modulelist *modulelist, char *path)
     {
         modulelist->modules[i].handle = dlopen(modulelist->modules[i].path, RTLD_LAZY);
 
-	errorstring = dlerror();
-	check(!errorstring, "failed on loading module: %s, REASON: %s", modulelist->modules[i].name, errorstring);
+	    errorstring = dlerror();
+	    check(!errorstring, "failed on loading module: %s, REASON: %s", modulelist->modules[i].name, errorstring);
 
         modulelist->modules[i].querry_function = dlsym(modulelist->modules[i].handle, "tobModule_QuerryFunction");
-	check(!dlerror(), "failed on loading tobModule_QuerryFunction from %s", modulelist->modules[i].name);
+	    check(!dlerror(), "failed on loading tobModule_QuerryFunction from %s", modulelist->modules[i].name);
 
-	modulelist->modules[i].destroy_function = dlsym(modulelist->modules[i].handle, "tobModule_DestroyFunction");
-	check(!dlerror(), "failed on loading tobModule_DestroyFunction from %s", modulelist->modules[i].name);
+	    modulelist->modules[i].destroy_function = dlsym(modulelist->modules[i].handle, "tobModule_DestroyFunction");
+	    check(!dlerror(), "failed on loading tobModule_DestroyFunction from %s", modulelist->modules[i].name);
 
-	//remove the filename from path ex modules/test/test.so to modules/test/ to have a useable relativ path	
-	for(a=strlen(modulelist->modules[i].path) ; a>=0 ; a--)
-	{
-	    if(modulelist->modules[i].path[a] == '/')
+	    //remove the filename from path ex modules/test/test.so to modules/test/ to have a useable relativ path	
+	    for(a=strlen(modulelist->modules[i].path) ; a>=0 ; a--)
 	    {
-		modulelist->modules[i].path[a+1] = '\0';
-		break;
+	        if(modulelist->modules[i].path[a] == '/')
+	        {
+		    modulelist->modules[i].path[a+1] = '\0';
+		    break;
+	        }
 	    }
-	}
-	if(a<0) //same directory
-	    modulelist->modules[i].path[0] = '\0';
+	    if(a<0) //same directory
+	        modulelist->modules[i].path[0] = '\0';
     }
 
     //call init
