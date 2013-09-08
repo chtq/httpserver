@@ -52,7 +52,6 @@ int32_t FreeHeader(header);
 int32_t FreeSessions(tobServ_SessionList*);
 int64_t StartSession(tobServ_SessionList*, char*, uint64_t);
 int32_t GetSessionCodeFromCookie(char*);
-char *urldecode(char*);
 
 int main(int argc, char *argv[])
 {
@@ -1069,25 +1068,6 @@ int64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code) 
     sessionlist->sessions[position].expire = time(NULL)+10000;
     sessionlist->sessions[position].variables = NULL;
 
-    for(i=0; i<sessionlist->num; i++)
-    {
-        if(!strcmp(sessionlist->sessions[i].IP, IP) && sessionlist->sessions[i].code==code)
-        {
-            sessionlist->sessions[i].expire = time(NULL)+10000;
-            pthread_mutex_unlock(sessionlist->mutex_session);
-            return -1;
-        }
-    }
-    sessionlist->sessions = realloc(sessionlist->sessions, sizeof(tobServ_Session)*(sessionlist->num+1));
-
-    stringcpy(sessionlist->sessions[sessionlist->num].IP, IP, 20);
-    sessionlist->sessions[sessionlist->num].code = newcode;
-    sessionlist->sessions[sessionlist->num].num = 0;
-    sessionlist->sessions[sessionlist->num].expire = time(NULL)+10000;
-    sessionlist->sessions[sessionlist->num].variables = NULL;
-
-    sessionlist->num++;
-
     pthread_mutex_unlock(sessionlist->mutex_session);
 
     return newcode;
@@ -1116,37 +1096,5 @@ int GetSessionCodeFromCookie(char *cookiestring)
     if(cookies)
         free(cookies);
     return -1;
-}
-
-char *urldecode(char *input)
-{
-    int i, a;
-    int length;
-    char buffer[3];
-    char replacechar;
-
-    length = strlen(input);
-
-    a=0;
-
-    for(i=0;i<length;i++)
-    {
-         if(input[i]=='%' && i<(length-2))
-         {
-             stringcpy(buffer, input+i+1, 3);
-             replacechar = strtol(buffer, NULL, 16);
-             input[a]=replacechar;
-             i+=2;
-         }
-         else if(input[i]=='+')
-             input[a] = ' ';
-         else if(a < i)
-             input[a]=input[i];
-
-         a++;
-    }
-    input[a] = '\0';
-
-    return input;
 }
 
