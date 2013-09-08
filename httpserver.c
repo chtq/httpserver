@@ -1038,26 +1038,13 @@ uint64_t StartSession(tobServ_SessionList *sessionlist, char *IP, uint64_t code)
     if (code == 0)   // add new session
     {
         newcode = rand() * RAND_MAX + rand();
-        position = BSearchNewSession(newcode, sessionlist);
+        
         sessionlist->num++;
-        if(sessionlist->sessions)
-        {
-            sessionlist->sessions = realloc(sessionlist->sessions, (sessionlist->num)*sizeof(tobServ_Session));
-        }
-        else
-        {
-            sessionlist->sessions = malloc((sessionlist->num)*sizeof(tobServ_Session));
-        }
+        
+        sessionlist->sessions = realloc(sessionlist->sessions, (sessionlist->num)*sizeof(tobServ_Session));
 
-        //move all if some already exist start from the back
-        if(sessionlist->num>1)
-        {
-            for(i = sessionlist->num - 2; i >= position ;i--)
-            {
-                sessionlist->sessions[i+1] = sessionlist->sessions[i];
-                if (position == i) break; // protection against integer overflow
-            }
-        }
+        //get position and move the elements after position so position is free
+        position = BSearchNewSession(newcode, sessionlist);
 
         //add
         stringcpy(sessionlist->sessions[position].IP, IP, 20);
@@ -1107,22 +1094,17 @@ uint32_t BSearchSession(uint64_t code, tobServ_SessionList *sessionlist)
 
 uint32_t BSearchNewSession(uint64_t code, tobServ_SessionList *sessionlist)
 {
-    int64_t left, right; uint64_t i;
-    if (sessionlist->num > 0)
+    uint64_t i;
+    
+    if (sessionlist->num>1)
     {
-        left = 0;
-        right = sessionlist->num-1;
-        i = left + ((right - left) / 2);
-        if (sessionlist->sessions[i].code > code)
-            right = i;    
-
-        while(right > 0 && code < sessionlist->sessions[right].code)
+        //move until position found
+        for(i=sessionlist->num-2;i>0 && code < sessionlist->sessions[i].code;i--)
         {
-            i = right;
-            right--;
+            sessionlist->sessions[i+1] = sessionlist->sessions[i]; 
         }
         
-        return i;
+        return i+1; //correct position is the last one cleared
     }
 
     return 0;
