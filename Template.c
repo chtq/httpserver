@@ -42,7 +42,13 @@ int32_t FreeTemplate(tobServ_template *templatehandle)
         tobString_Free(&templatehandle->sections[i].name);
 
         for(a=0;a<templatehandle->sections[i].numrows;a++)
+        {
             FreeTemplate(templatehandle->sections[i].rows[a]);
+            free(templatehandle->sections[i].rows[a]);
+            templatehandle->sections[i].rows[a] = NULL;
+        }
+        free(templatehandle->sections[i].rows);
+          
     }
     if(templatehandle->sections)
         free(templatehandle->sections);
@@ -120,6 +126,7 @@ tobServ_template *AddTemplateSectionRow(tobServ_template *templatehandle, int se
     InitializeTemplate(templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].numrows]);
 
     templatehandle->sections[sectionID].numrows = newnum;
+       
 
     return templatehandle->sections[sectionID].rows[templatehandle->sections[sectionID].numrows-1];
 
@@ -318,94 +325,105 @@ tobServ_parsedFile ParseFileSubString(char *string, int size)
                 
             for(;i<size && a<MAX_VARIABLE_LENGTH;i++)
             {
-                if(string[i] == '{') //end found
+                if(string[i] == '}') //end found
                 {
+                    name[a] = '\0';
                     i++;
-                    if(string[i] != '{') // { must follow right after
-                    {
-                        check(tobString_sprintf(&text, "{%s}", name)==0, "tobString_sprintf failed"); //no switch found add everything
-                    }
-                    else
-                    {
-                        i++; //next char
-
-                        //get the onset part of the switch
-                        for(;i<size;i++)
+                    if (a > 0) //it's only a switch if the sectionname length is greater than zero
+                    { 
+                        if(string[i] != '{') // { must follow right after
                         {
-                            if(string[i] == '}')
-                                break;
-
-                            check(tobString_AddChar(&switchSET, string[i])==0, "tobString_AddChar failed");
-                        }
-                        if(i==size) //couldn't find '}'
-                        {
-                            check(tobString_sprintf(&text, "{%s}{%s", name, switchSET.str)==0, "tobString_sprintf failed");
+                            check(tobString_sprintf(&text, "{%s}", name)==0, "tobString_sprintf failed"); //no switch found add everything
                         }
                         else
                         {
-                            //it was found now search for the unset part of the switch
-                            i++; //advance
-                            if(string[i] != '{') //opening { must follow right after
+                            i++; //next char
+
+                            //get the onset part of the switch
+                            for(;i<size;i++)
                             {
-                                check(tobString_sprintf(&text, "{%s}{%s}", name, switchSET.str)==0, "tobString_sprintf failed");
+                                if(string[i] == '}')
+                                    break;
+
+                                check(tobString_AddChar(&switchSET, string[i])==0, "tobString_AddChar failed");
+                            }
+                            if(i==size) //couldn't find '}'
+                            {
+                                check(tobString_sprintf(&text, "{%s}{%s", name, switchSET.str)==0, "tobString_sprintf failed");
                             }
                             else
                             {
-                                i++; //next char
-                                for(;i<size;i++)
+                                //it was found now search for the unset part of the switch
+                                i++; //advance
+                                if(string[i] != '{') //opening { must follow right after
                                 {
-                                    if(string[i] == '}')
-                                        break;
-
-                                    check(tobString_AddChar(&switchUNSET, string[i])==0, "tobString_AddChar failed");
-                                }
-                                
-                                if(i==size) //couldn't find '}'
-                                {
-                                    check(tobString_sprintf(&text, "{%s}{%s}{", name, switchSET.str, switchUNSET.str)==0, "tobString_sprintf failed");
+                                    check(tobString_sprintf(&text, "{%s}{%s}", name, switchSET.str)==0, "tobString_sprintf failed");
                                 }
                                 else
                                 {
-                                    //everything was found seems all valid
-
-                                    //check if text must be added
-                                    if(text.len>0)
+                                    i++; //next char
+                                    for(;i<size;i++)
                                     {
+                                        if(string[i] == '}')
+                                            break;
+
+                                        check(tobString_AddChar(&switchUNSET, string[i])==0, "tobString_AddChar failed");
+                                    }
+                                    
+                                    if(i==size) //couldn't find '}'
+                                    {
+                                        check(tobString_sprintf(&text, "{%s}{%s}{", name, switchSET.str, switchUNSET.str)==0, "tobString_sprintf failed");
+                                    }
+                                    else
+                                    {
+                                        //everything was found seems all valid
+
+                                        //check if text must be added
+                                        if(text.len>0)
+                                        {
+                                            result.numparts++;
+                                            result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
+                                            check_mem(result.parts);
+
+                                            result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
+                                            result.parts[result.numparts-1].numparts = 0;
+                                            result.parts[result.numparts-1].parts = NULL;
+
+                                            result.parts[result.numparts-1].name = text;
+
+                                            tobString_Init(&text, 512);
+                                        }
+
                                         result.numparts++;
                                         result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
                                         check_mem(result.parts);
 
-                                        result.parts[result.numparts-1].type = PARSEDFILE_TEXT;
-                                        result.parts[result.numparts-1].numparts = 0;
-                                        result.parts[result.numparts-1].parts = NULL;
+                                        //add switchSET and switchUNSET parsed
+                                        
+                                        tobString_Init(&result.parts[result.numparts-1].name, MAX_VARIABLE_LENGTH);
 
-                                        result.parts[result.numparts-1].name = text;
+                                        check(tobString_Copy(&result.parts[result.numparts-1].name, name, a)==0, "tobString_Copy failed");   
+                                        
+                                        result.parts[result.numparts-1].type = PARSEDFILE_SWITCH;
+                                        result.parts[result.numparts-1].numparts = 2;
+                                        result.parts[result.numparts-1].parts = malloc(sizeof(tobServ_parsedFile)*2);
+                                        check_mem(result.parts[result.numparts-1].parts);
 
-                                        tobString_Init(&text, 512);
+                                        result.parts[result.numparts-1].parts[0] = ParseFileSubString(switchSET.str, switchSET.len);
+                                        check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
+                                                        
+                                        result.parts[result.numparts-1].parts[1] = ParseFileSubString(switchUNSET.str, switchUNSET.len);
+                                        check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
                                     }
-
-                                    result.numparts++;
-                                    result.parts = realloc(result.parts, sizeof(tobServ_parsedFile)*result.numparts);
-                                    check_mem(result.parts);
-
-                                    //add switchSET and switchUNSET parsed
-                                    result.parts[result.numparts-1].type = PARSEDFILE_SWITCH;
-                                    result.parts[result.numparts-1].numparts = 2;
-                                    result.parts[result.numparts-1].parts = malloc(sizeof(tobServ_parsedFile)*2);
-                                    check_mem(result.parts[result.numparts-1].parts);
-
-                                    result.parts[result.numparts-1].parts[0] = ParseFileSubString(switchSET.str, switchSET.len);
-                                    check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
-                                                    
-                                    result.parts[result.numparts-1].parts[1] = ParseFileSubString(switchUNSET.str, switchUNSET.len);
-                                    check(result.parts[result.numparts-1].parts[0].type>=0, "ParseFileSubString failed");
                                 }
-                            }
-                        }                       
+                            }                       
 
-                        tobString_Free(&switchSET);
-                        tobString_Free(&switchUNSET);
+                            tobString_Free(&switchSET);
+                            tobString_Free(&switchUNSET);
+                        }
                     }
+                    else
+                        check(tobString_Add(&text, "{}", strlen("{}"))==0, "tobString_Add failed"); //no replacement needed because it isn't a valid switchname
                             
                     break;//done searching for the var name
                 }
@@ -599,8 +617,8 @@ int32_t SetTemplateSwitch(tobServ_template *template, char *name)
     template->switches = realloc(template->switches, sizeof(tobServ_TemplateSwitch)*template->numswitches);
     check_mem(template->switches);
 
-    tobString_Init(&template->switches[template->numswitches].name, MAX_VARIABLE_LENGTH);
-    check(tobString_Add(&template->switches[template->numswitches].name, name, strlen(name))==0, "tobString_Add failed");
+    tobString_Init(&template->switches[template->numswitches-1].name, MAX_VARIABLE_LENGTH);
+    check(tobString_Add(&template->switches[template->numswitches-1].name, name, strlen(name))==0, "tobString_Add failed");
 
     return 0;
 
