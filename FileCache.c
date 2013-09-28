@@ -21,9 +21,9 @@ int32_t InitializeFile(tobServ_file *file)
 int32_t InitializeFileCache(tobServ_FileCache *filecache, uint32_t maxfiles, uint32_t maxfilesize)
 {
     if(maxfilesize<1)
-	return -1;
+	    return -1;
     if(maxfiles<1)
-	return -2;
+	    return -2;
     
     filecache->numfiles = 0;
     filecache->active = 1;
@@ -342,29 +342,29 @@ int32_t FreeFileFromFileCache(tobServ_FileCache* filecache, tobServ_file* file)
     
     if(file->cacheID>=0) //it is cached
     {
-	check(pthread_rwlock_rdlock(&filecache->lock)==0, "pthread_rwlock_rdlock failed");
-	isCacheLocked = 1;
+	    check(pthread_rwlock_rdlock(&filecache->lock)==0, "pthread_rwlock_rdlock failed");
+	    isCacheLocked = 1;
 
-	check(pthread_mutex_lock(&filecache->files[file->cacheID].filelock)==0, "pthread_mutex_lock failed");
-	isFileLocked = 1;
+	    check(pthread_mutex_lock(&filecache->files[file->cacheID].filelock)==0, "pthread_mutex_lock failed");
+	    isFileLocked = 1;
 	
-	filecache->files[file->cacheID].usecount--;
+	    filecache->files[file->cacheID].usecount--;
 	
-	pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);
-	isFileLocked = 0;
+	    pthread_mutex_unlock(&filecache->files[file->cacheID].filelock);
+	    isFileLocked = 0;
 
-	pthread_rwlock_unlock(&filecache->lock);
-	isCacheLocked = 0;
+	    pthread_rwlock_unlock(&filecache->lock);
+	    isCacheLocked = 0;
 
-	//notitfy someone waiting for files to be freed that a file just got freed
-	check(pthread_mutex_lock(&filecache->freeTookPlaceMutex)==0, "pthread_mutex_lock failed");
-	isFreeTookPlaceLocked = 1;
+	    //notitfy someone waiting for files to be freed that a file just got freed
+	    check(pthread_mutex_lock(&filecache->freeTookPlaceMutex)==0, "pthread_mutex_lock failed");
+	    isFreeTookPlaceLocked = 1;
 	
-	filecache->freeTookPlace = 1;	
-	pthread_cond_broadcast(&filecache->freeTookPlaceCond);
+	    filecache->freeTookPlace = 1;	
+	    pthread_cond_broadcast(&filecache->freeTookPlaceCond);
 	
-	pthread_mutex_unlock(&filecache->freeTookPlaceMutex);
-	isFreeTookPlaceLocked = 0;
+	    pthread_mutex_unlock(&filecache->freeTookPlaceMutex);
+	    isFreeTookPlaceLocked = 0;
     }
 
     return 0;
@@ -460,26 +460,26 @@ tobServ_file get_file(tobServ_FileCache *filecache, char *path, uint32_t parse, 
     
     if(!cache)
     {
-	result = LoadFileFromDisk(path);
-	check(result.content, "LoadFileFromDisk failed for %s", path);
+	    result = LoadFileFromDisk(path);
+	    check(result.content, "LoadFileFromDisk failed for %s", path);
 	
-	result.parsedFile.numparts = 0;
-	result.parsedFile.parts = NULL;
-	result.parsedFile.type = 0;
-	result.cacheID = -1;
+	    result.parsedFile.numparts = 0;
+	    result.parsedFile.parts = NULL;
+	    result.parsedFile.type = 0;
+	    result.cacheID = -1;
 
-	if(parse && result.content)
-	{
-	    result.parsedFile = ParseFile(&result);
-	    check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
-	}
-	else
-	    result.parsedFile.type = -1;
+	    if(parse && result.content)
+	    {
+	        result.parsedFile = ParseFile(&result);
+	        check(result.parsedFile.type>=0, "ParseFile failed for %s", path);
+	    }
+	    else
+	        result.parsedFile.type = -1;
     }
     else
     {
-	result = GetFileFromFileCache(filecache, path, parse);
-	check(result.content, "GetFileFromFileCache failed for %s", path);
+	    result = GetFileFromFileCache(filecache, path, parse);
+	    check(result.content, "GetFileFromFileCache failed for %s", path);
     }
 
     return result;
@@ -493,16 +493,16 @@ error:
 int32_t free_file(tobServ_FileCache *cache, tobServ_file *file)
 {
     if(file->cacheID>=0)
-	FreeFileFromFileCache(cache, file);
+	    FreeFileFromFileCache(cache, file);
     else
     {
-	if(file->content)
-	    free(file->content);
-	if(file->type)
-	    free(file->type);
+	    if(file->content)
+	        free(file->content);
+	    if(file->type)
+	        free(file->type);
 
-	if(file->parsedFile.type>=0)
-	    FreeParsed(&file->parsedFile);
+	    if(file->parsedFile.type>=0)
+	        FreeParsed(&file->parsedFile);
     }
 
     //set all to zero
